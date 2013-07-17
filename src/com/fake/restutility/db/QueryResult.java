@@ -1,8 +1,8 @@
 package com.fake.restutility.db;
 
 import android.database.Cursor;
-import android.util.Log;
 import com.fake.restutility.object.ManagedObject;
+import com.fake.restutility.util.Log;
 
 import java.lang.reflect.Array;
 import java.util.ArrayList;
@@ -72,7 +72,6 @@ public class QueryResult {
 		return current;
 	}
 
-	@SuppressWarnings("unchecked")
 	public <T extends ManagedObject> T[] results() {
 		return results.toArray((T[]) Array.newInstance(from.getClass(), results.size()));
 	}

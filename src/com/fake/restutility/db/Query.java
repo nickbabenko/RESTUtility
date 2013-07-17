@@ -3,9 +3,9 @@ package com.fake.restutility.db;
 import android.content.ContentValues;
 import android.database.sqlite.SQLiteDatabase;
 import android.text.TextUtils;
-import android.util.Log;
 import com.fake.restutility.object.ManagedObject;
 import com.fake.restutility.rest.ObjectManager;
+import com.fake.restutility.util.Log;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -98,6 +98,8 @@ public class Query {
 	// Select query configuration
 	private int limit							= 20;
 	private int offset							= 0;
+	private String rawQuery;
+	private String[] rawArgs;
 
 	// General query configuration
 	private Type type 							= Type.Select;
@@ -155,6 +157,13 @@ public class Query {
 
 
 	/* General Query Configuration Methods  */
+
+	public Query raw(String raw, String args[]) {
+		this.rawQuery 	= raw;
+		this.rawArgs	= args;
+
+		return this;
+	}
 
 	/**
 	 *
@@ -237,7 +246,7 @@ public class Query {
 				case Update:
 					int updatedRows = database().update(tableName(), contentValues(), updateWhereString(), updateWhereArgs());
 
-					Log.d(TAG, "Updated rows: " + updatedRows);
+					Log.d(TAG, "Updated rows: " + updatedRows + " - " +  updateWhereString() + " - " + TextUtils.join(", ", updateWhereArgs()));
 
 					if(updatedRows > 0)
 						result = new QueryResult(new Query(Type.Select).from(from).where(from.primaryKeyName(), "=", from.primaryKeyValue()).execute().current());
@@ -246,7 +255,11 @@ public class Query {
 					break;
 				case Select:
 					Log.d(TAG, "Select where: " + selectWhereString() + " - " + TextUtils.join(", ", selectWhereArgs()) + " - " + orderBy());
-					result = new QueryResult(from, database().query(tableName(), columnNameArray(), selectWhereString(), selectWhereArgs(), null, null, orderBy(), " " + offset + ", " + limit));
+
+					if(rawQuery != null)
+						result = new QueryResult(from, database().rawQuery(rawQuery, rawArgs));
+					else
+						result = new QueryResult(from, database().query(tableName(), columnNameArray(), selectWhereString(), selectWhereArgs(), null, null, orderBy(), " " + offset + ", " + limit));
 					break;
 			}
 		}
@@ -300,7 +313,15 @@ public class Query {
 		while(whereIterator.hasNext()) {
 			QueryWhere where = whereIterator.next();
 
-			selectWhereString += seperator + where.key() + " " + where.type() + (where.value() != null ? " ?" : "");
+			selectWhereString += seperator + where.key() + " " + where.type();
+
+			if(where.value() instanceof String[] &&
+			   (where.type().equals("IN") || where.type().equals("NOT IN"))) {
+				selectWhereString += "(" + TextUtils.join(", ", (String[]) where.value()) + ")";
+			}
+			else {
+				selectWhereString += (where.value() != null ? " ?" : "");
+			}
 
 			seperator = " AND ";
 		}
@@ -309,22 +330,20 @@ public class Query {
 	}
 
 	private String[] selectWhereArgs() {
-		String[] selectWhereArgs = new String[andWhere.size()];
+		ArrayList<String> selectWhereArgs = new ArrayList<String>();
 		Iterator<QueryWhere> whereIterator = andWhere.iterator();
-		int inc = 0;
 
 		while(whereIterator.hasNext()) {
 			QueryWhere where = whereIterator.next();
 
-			if(where.value() == null)
+			if(where.value() == null ||
+			   where.value() instanceof String[])
 				continue;
 
-			selectWhereArgs[inc] = "" + where.value();
-
-			inc++;
+			selectWhereArgs.add("" + where.value());
 		}
 
-		return selectWhereArgs;
+		return selectWhereArgs.toArray(new String[selectWhereArgs.size()]);
 	}
 
 	public String orderBy() {

@@ -3,9 +3,9 @@ package com.fake.restutility.db;
 import android.content.Context;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
-import android.util.Log;
 import com.fake.restutility.object.ManagedObject;
 import com.fake.restutility.object.ManagedObjectUtils;
+import com.fake.restutility.util.Log;
 
 /**
  * Created by nickbabenko on 15/06/13.

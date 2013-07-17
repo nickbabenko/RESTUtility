@@ -2,17 +2,19 @@ package com.fake.restutility.object;
 
 import android.content.ContentValues;
 import android.database.Cursor;
-import android.util.Log;
 import com.fake.restutility.db.Query;
 import com.fake.restutility.db.QueryResult;
 import com.fake.restutility.exception.PrimaryKeyNotDefinedException;
 import com.fake.restutility.rest.ObjectManager;
 import com.fake.restutility.rest.ObjectManager.ObjectRequestListener;
+import com.fake.restutility.util.Log;
 import org.apache.http.message.BasicNameValuePair;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Created by nickbabenko on 14/06/13.
@@ -63,6 +65,7 @@ public class ManagedObject {
 	private String[] columnNames;
 	private ArrayList<Column> columns;
 	private ArrayList<Field> columnFields;
+	private HashMap<String, Field> columnFieldsMap;
 	private ArrayList<Relation> relations;
 	private ArrayList<Field> relationFields;
 
@@ -131,7 +134,27 @@ public class ManagedObject {
 	}
 
 	public String resourcePath() {
-		return (entity != null ? entity.resourcePath() : null);
+		String resourcePath = (entity != null ? entity.resourcePath() : null);
+
+		if(resourcePath != null) {
+			Matcher matcher = Pattern.compile("/:(.*?)/").matcher(resourcePath);
+
+			while(matcher.find()) {
+				String match = matcher.group();
+				String property = match.replace(":", "").substring(1, (match.length() - 2));
+
+				if(columnFieldsMap.containsKey(property) == true) {
+					Field field = columnFieldsMap.get(property);
+
+					try {
+						resourcePath = resourcePath.replace(match, "/" + field.get(this) + "/");
+					}
+					catch (IllegalAccessException e) {}
+				}
+			}
+		}
+
+		return resourcePath;
 	}
 
 	private String _primaryKeyName() {
@@ -164,6 +187,7 @@ public class ManagedObject {
 		columns 						= new ArrayList<Column>();
 		relations						= new ArrayList<Relation>();
 		columnFields					= new ArrayList<Field>();
+		columnFieldsMap					= new HashMap<String, Field>();
 		relationFields					= new ArrayList<Field>();
 
 		// Iterate annotations
@@ -175,6 +199,7 @@ public class ManagedObject {
 				if(annotation.annotationType().equals(Column.class)) {
 					columns.add((Column) annotation); // Add to the columns array
 					columnFields.add(field);
+					columnFieldsMap.put(field.getName(), field);
 
 					// If the current annotation is marked as the primary key
 					if(((Column) annotation).primaryKey()) {
@@ -191,18 +216,17 @@ public class ManagedObject {
 		}
 
 		// Instantiate column name array for query reference using the column array size
-		columnNames = new String[(columns.size() + relations.size())];
-		int inc = 0;
+		columnNames 					= new String[(columns.size() + relations.size())];
+		int inc 						= 0;
 
 		Iterator<Column> columnIterator = columns.iterator();
-		int columnInc							= 0;
+		int columnInc					= 0;
 
 		// Iterate all columns
 		while(columnIterator.hasNext()) {
-			Column column = columnIterator.next();
-			Field columnField = columnFields.get(columnInc);
+			Column column 		= columnIterator.next();
 
-			columnNames[inc] = (column.name() == "" ? columnField.getName() : column.name()); // Append to column name array
+			columnNames[inc] 	= (column.name() == "" ? columnFields.get(columnInc).getName() : column.name()); // Append to column name array
 
 			columnInc++;
 			inc++;
@@ -235,24 +259,20 @@ public class ManagedObject {
 
 	public String[] columnDefinitions() {
 		List<String> definitionList				= new ArrayList<String>();
-		Iterator<Column> columnIterator 		= columns.iterator();
-		int inc									= 0;
+		Iterator<Field> columnFieldIterator 	= columnFields.iterator();
 
-		while(columnIterator.hasNext()) {
-			Column column 						= columnIterator.next();
-			Field field							= columnFields.get(inc);
+		while(columnFieldIterator.hasNext()) {
+			Field columnField 					= columnFieldIterator.next();
+			Column column						= columnField.getAnnotation(Column.class);
 
-			definitionList.add(columnDefinition(column, field));
-
-			inc++;
+			definitionList.add(columnDefinition(column, columnField));
 		}
 
-		Iterator<Relation> relationIterator		= relations.iterator();
-		int relationInc							= 0;
+		Iterator<Field> relationFieldIterator	= relationFields.iterator();
 
-		while(relationIterator.hasNext()) {
-			Relation relation					= relationIterator.next();
-			Field relationField					= relationFields.get(relationInc);
+		while(relationFieldIterator.hasNext()) {
+			Field relationField					= relationFieldIterator.next();
+			Relation relation					= relationField.getAnnotation(Relation.class);
 
 			// If the field is an array, it's a one-to-many relation type.
 			// These aren't loaded from the current table, so we don't need to create a column
@@ -262,8 +282,6 @@ public class ManagedObject {
 				continue;
 
 			definitionList.add(relationDefinition(relation, relationField));
-
-			relationInc++;
 		}
 
 		if(primaryColumn == null)
@@ -300,30 +318,24 @@ public class ManagedObject {
 	}
 
 	public void setFromCursor(Cursor cursor) {
-
-		Log.d(TAG, "Set from cursor");
-
 		// Iterate and populate data columns
-		Iterator<Column> columnIterator 	= columns.iterator();
-		int columnInc 						= 0;
+		Iterator<Field> columnFieldIterator 	= columnFields.iterator();
 
-		while(columnIterator.hasNext()) {
-			Column column 		= columnIterator.next();
-			Field field			= columnFields.get(columnInc);
+		while(columnFieldIterator.hasNext()) {
+			Field field			= columnFieldIterator.next();
+			Column column		= field.getAnnotation(Column.class);
 			String columnName	= (column.name() == "" ? field.getName() : column.name());
 			int columnIndex 	= cursor.getColumnIndex(columnName);
 
-			if(columnIndex == -1) {
-				columnInc++;
-
+			if(columnIndex == -1)
 				continue;
-			}
 
 			try {
 				if(field.getType().equals(String.class)) {
 					field.set(this, cursor.getString(columnIndex));
 				}
-				else if(field.getType().equals(Integer.class) || field.getType().equals(int.class)) {
+				else if(field.getType().equals(Integer.class) ||
+						field.getType().equals(int.class)) {
 					field.set(this, cursor.getInt(columnIndex));
 				}
 				else if(field.getType().equals(Double.class)) {
@@ -342,32 +354,26 @@ public class ManagedObject {
 
 					field.set(this, calendar);
 				}
+				else if(field.getType().equals(boolean.class) ||
+						field.getType().equals(Boolean.class)) {
+					field.set(this, (cursor.getInt(columnIndex) == 1));
+				}
 			}
 			catch(IllegalAccessException e) {
 				e.printStackTrace();
 			}
-
-			columnInc++;
 		}
 
-		Log.d(TAG, "Load relations");
-
 		// Iterate and populate relation objects
-		Iterator<Relation> relationIterator = relations.iterator();
-		int relationInc						= 0;
+		Iterator<Field> relationFieldIterator = relationFields.iterator();
 
-		while(relationIterator.hasNext()) {
-			Relation relation	= relationIterator.next();
-			Field field			= relationFields.get(relationInc);
+		while(relationFieldIterator.hasNext()) {
+			Field field			= relationFieldIterator.next();
+			Relation relation	= field.getAnnotation(Relation.class);
 			String relationName	= (relation.name() == "" ? field.getName() : relation.name());
-
-
-			Log.d(TAG, "Load relation: " + relationName + " - " + field.getType());
 
 			// If the field, is an array its a one-to-many relation.
 			if(field.getType().isArray()) {
-				Log.d(TAG, "Is Array");
-
 				try {
 					String connectedBy = (relation.connectedBy() == "" ? field.getName() : relation.connectedBy());
 
@@ -375,8 +381,6 @@ public class ManagedObject {
 					QueryResult relatedObjects = Query.select((Class<? extends ManagedObject>) field.getType().getComponentType())
 						.where(connectedBy, "=", primaryKeyValue())
 						.execute();
-
-					Log.d(TAG, "Load many relation: " + relationName + " - " + relatedObjects.count());
 
 					field.set(this, relatedObjects.results());
 				}
@@ -404,11 +408,8 @@ public class ManagedObject {
 					if(connectedByValue == 0) {
 						int columnIndex 	= cursor.getColumnIndex(relationName);
 
-						if(columnIndex == -1) {
-							relationInc++;
-
+						if(columnIndex == -1)
 							continue;
-						}
 
 						connectedByValue = cursor.getInt(columnIndex);
 					}
@@ -418,8 +419,6 @@ public class ManagedObject {
 				}
 				catch (IllegalAccessException e) {}
 			}
-
-			relationInc++;
 		}
 	}
 
@@ -450,77 +449,74 @@ public class ManagedObject {
 
 		// Store columns
 		Iterator<Field> columnFieldIterator  = columnFields.iterator();
-		int inc = 0;
 
 		while(columnFieldIterator.hasNext()) {
 			Field columnField 		= columnFieldIterator.next();
-			Column column			= columns.get(inc);
+			Column column			= columnField.getAnnotation(Column.class);
 			String columnName		= (column.name() == "" ? columnField.getName() : column.name());
 			Object columnValue;
 
 			try {
 				columnValue	= columnField.get(this);
 
-				if(columnValue == null) {
-					inc++;
-
+				if(columnValue == null)
 					continue;
-				}
 
 				if(columnField.getType().equals(String.class))
 					contentValues.put(columnName, (String) columnValue);
+
 				else if(columnField.getType().equals(Integer.class))
 					contentValues.put(columnName, (Integer) columnValue);
-				else if(columnField.getType().equals(int.class))
-					contentValues.put(columnName, columnField.getInt(this));
+
+				else if(columnField.getType().equals(Boolean.class))
+					contentValues.put(columnName, (Boolean) columnValue);
+
 				else if(columnField.getType().equals(Float.class))
 					contentValues.put(columnName, (Float) columnValue);
-				else if(columnField.getType().equals(Calendar.class)) {
+
+				else if(columnField.getType().equals(int.class))
+					contentValues.put(columnName, columnField.getInt(this));
+
+				else if(columnField.getType().equals(float.class))
+					contentValues.put(columnName, (Float) columnValue);
+
+				else if(columnField.getType().equals(Calendar.class))
 					contentValues.put(columnName, ((Calendar) columnValue).getTimeInMillis());
-				}
+
 				else if(columnField.getType().equals(Date.class))
 					contentValues.put(columnName, ((Date) columnValue).getTime());
+
+				else if(columnField.getType().equals(boolean.class))
+					contentValues.put(columnName, columnField.getBoolean(this));
 			}
 			catch (IllegalAccessException e) {}
-
-			inc++;
 		}
 
 		// Store Relations
 		Iterator<Field> relationFieldIterator = relationFields.iterator();
 
-		inc = 0;
-
 		while(relationFieldIterator.hasNext()) {
-			Field relationField					= relationFieldIterator.next();
-			Relation relation					= relations.get(inc);
-			String columnName					= (relation.name() == "" ? relationField.getName() : relation.name());
+			Field relationField		= relationFieldIterator.next();
+			Relation relation		= relationField.getAnnotation(Relation.class);
+			String columnName		= (relation.name() == "" ? relationField.getName() : relation.name());
 			Object relationValue;
 
 			try {
 				relationValue = relationField.get(this);
 
-				if(relationValue == null || ManagedObjectUtils.isSubclassOf(relationField.getType(), ManagedObject.class) == false) {
-					inc++;
-
+				if(relationValue == null || ManagedObjectUtils.isSubclassOf(relationField.getType(), ManagedObject.class) == false)
 					continue;
-				}
 
 				// If the field is an array, it's a one-to-many relation type.
 				// These aren't loaded from the current table, so we save its value
 				// Or if we have a separate field to map this relation with, don't use it
 				if(relationField.getType().isArray() ||
-				   relation.connectedBy() != "") {
-					inc++;
-
+				   relation.connectedBy() != "")
 					continue;
-				}
 
 				contentValues.put(columnName, (Integer) (((ManagedObject) relationValue).primaryKeyValue()));
 			}
 			catch (IllegalAccessException e) {}
-
-			inc++;
 		}
 
 		return contentValues;

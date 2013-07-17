@@ -13,14 +13,18 @@ import java.lang.annotation.Target;
 public @interface Column {
 
 	public enum DateFormat {
-		Unix
+		Unix,
+		MySql_Date,
+		MySql_DateTime,
+		Default
 	};
 
 	boolean autoIncrement() 	default false;
 	boolean primaryKey() 		default false;	// Indicates wether this is the primary key field and used to reference previous objects
-	String name() 				default "";           // Used to reference the column in the database
+	String name() 				default "";     // Used to reference the column in the database
 	String keyPath() 			default "";     // Used to reference the key in the REST response
 	int length() 				default -1;
 	DateFormat dateFormat() 	default DateFormat.Unix;
+	boolean ignoreIfZero()		default false;
 
 }

@@ -1,12 +1,12 @@
 package com.fake.restutility.mapping;
 
-import android.util.Log;
 import com.fake.restutility.db.Query;
 import com.fake.restutility.db.QueryResult;
 import com.fake.restutility.object.Column;
 import com.fake.restutility.object.Entity;
 import com.fake.restutility.object.ManagedObject;
 import com.fake.restutility.object.Relation;
+import com.fake.restutility.util.Log;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -25,6 +25,7 @@ public class MappingResult {
 
 	private Class<? extends ManagedObject> entityClass;
 	private ManagedObject managedObject;
+	private String keyPath;
 
 	private JSONObject jsonObject;
 	private JSONArray jsonArray;
@@ -59,8 +60,9 @@ public class MappingResult {
 		JSONToManagedObjects();
 	}
 
-	public MappingResult(Class<? extends ManagedObject> entityClass, InputStream inputStream) {
-		this.entityClass = entityClass;		 // Store the class of the object
+	public MappingResult(Class<? extends ManagedObject> entityClass, InputStream inputStream, String keyPath) {
+		this.entityClass 	= entityClass;		 // Store the class of the object
+		this.keyPath		= keyPath;
 
 		loadManagedObject();
 		loadJSONObject(inputStream);
@@ -101,6 +103,8 @@ public class MappingResult {
 			e.printStackTrace();
 		}
 
+		Log.d(TAG, "Response string: " + responseStrBuilder.toString(), true);
+
 		try {
 			jsonObject = new JSONObject(responseStrBuilder.toString());
 		}
@@ -129,8 +133,8 @@ public class MappingResult {
 				if(entity == null)
 					return;
 
-				if(entity.keyPath() != "" && isRelation == false) {
-					String[] keyPathSplit = (entity.keyPath().indexOf(".") == -1 ? new String[] { entity.keyPath() } : entity.keyPath().split("."));
+				if(keyPath != null && isRelation == false) {
+					String[] keyPathSplit = (keyPath.indexOf(".") == -1 ? new String[] { keyPath } : keyPath.split("."));
 
 					for(int i=0; i<keyPathSplit.length; i++) {
 						try {
@@ -169,27 +173,64 @@ public class MappingResult {
 			try {
 				JSONObjectToManagedObject(array.getJSONObject(i));
 			}
-			catch (JSONException e) {}
+			catch (JSONException e) {
+				e.printStackTrace();
+			}
 		}
 	}
 
 	private void JSONObjectToManagedObject(JSONObject object) {
+		Query query 				= new Query().from(managedObject);
+		String primaryColumnName 	= managedObject.primaryKeyName();
+
+		try {
+			Object primaryKeyValue = object.get(primaryColumnName);
+
+			ManagedObject existingObject = new Query(Query.Type.Select)
+					.where(primaryColumnName, "=", primaryKeyValue)
+					.from(managedObject)
+					.limit(1)
+					.execute()
+					.current();
+
+			if(existingObject != null) {
+				Log.d(TAG, "Mapping object (" + existingObject.getClass().getName() + ") from existing local object mapped by " + primaryColumnName + " = " + primaryKeyValue);
+
+				managedObject = existingObject;
+
+				query.from(managedObject)
+					 .type(Query.Type.Update)
+					 .where(primaryColumnName, "=", primaryKeyValue);
+			}
+			else {
+				Log.d(TAG, "Creating new object with remote identifier: " + primaryKeyValue);
+
+				query.type(Query.Type.Insert);
+			}
+		}
+		catch (Exception e) {
+			//.printStackTrace();
+
+			Log.d(TAG, "Creating new object");
+
+			query.type(Query.Type.Insert);
+		}
+
 		/* Process columns */
 
-		Column primaryColumn;
-		Query query 					= new Query().from(managedObject);
-		Iterator<Column> columnIterator = managedObject.columns().iterator();
-		int inc 						= 0;
+		Iterator<Field> columnFieldIterator = managedObject.columnFields().iterator();
+		int inc 							= 0;
+		int set								= 0;
 
-		while(columnIterator.hasNext()) {
-			Column column 		= columnIterator.next();
-			Field field			= managedObject.columnFields().get(inc);
-			String keyPath 		= (column.keyPath() == "" ? field.getName() : column.keyPath());
+		while(columnFieldIterator.hasNext()) {
+			Field columnField 		= columnFieldIterator.next();
+			Column column			= columnField.getAnnotation(Column.class);
+			String keyPath 			= (column.keyPath() == "" ? columnField.getName() : column.keyPath());
 
 			try {
 				Object columnValue	= object.get(keyPath);
 
-				if(field.getType().equals(Date.class) == true) {
+				if(columnField.getType().equals(Date.class) == true) {
 					Long _columnValue;
 
 					if(columnValue.getClass().equals(String.class))
@@ -199,9 +240,9 @@ public class MappingResult {
 
 					Date date = new Date(dateFormatter(_columnValue, column.dateFormat()));
 
-					field.set(managedObject, date);
+					columnField.set(managedObject, date);
 				}
-				else if(field.getType().equals(Calendar.class) == true) {
+				else if(columnField.getType().equals(Calendar.class) == true) {
 					Long _columnValue;
 
 					if(columnValue.getClass().equals(String.class))
@@ -213,18 +254,32 @@ public class MappingResult {
 
 					calendar.setTimeInMillis(dateFormatter(_columnValue, column.dateFormat()));
 
-					field.set(managedObject, calendar);
+					columnField.set(managedObject, calendar);
 				}
-				else if(field.getType().equals(float.class))
+				else if(columnField.getType().equals(int.class))
 					if(columnValue.getClass().equals(String.class))
-						field.setFloat(managedObject, Float.valueOf((String)columnValue));
-					else if(columnValue.getClass().equals(Double.class))
-						field.setFloat(managedObject, ((Double)columnValue).floatValue());
+						columnField.setInt(managedObject, Integer.valueOf((String) columnValue));
 					else
-						field.setFloat(managedObject, (Float)columnValue);
-				else {
-					field.set(managedObject, columnValue);
+						columnField.setInt(managedObject, (Integer) columnValue);
+				else if(columnField.getType().equals(Integer.class)) {
+					if(columnValue.getClass().equals(String.class))
+						columnField.set(managedObject, Integer.valueOf((String) columnValue));
+					else
+						columnField.set(managedObject, columnValue);
 				}
+				else if(columnField.getType().equals(float.class) ||
+						columnField.getType().equals(Float.class)) {
+					if(columnValue.getClass().equals(String.class))
+						columnField.setFloat(managedObject, Float.valueOf((String)columnValue));
+					else if(columnValue.getClass().equals(Double.class))
+						columnField.setFloat(managedObject, ((Double)columnValue).floatValue());
+					else
+						columnField.setFloat(managedObject, (Float)columnValue);
+				}
+				else
+					columnField.set(managedObject, columnValue);
+
+				set++;
 			}
 			catch(Exception e) {
 				Log.d(TAG, "Setting column value from response: " + e.getMessage());
@@ -233,61 +288,32 @@ public class MappingResult {
 			inc++;
 		}
 
-		String primaryColumnName = managedObject.primaryKeyName();
-
-		try {
-			Object primaryKeyValue = object.get(primaryColumnName);
-
-			ManagedObject existingObject = new Query(Query.Type.Select)
-				.where(primaryColumnName, "=", primaryKeyValue)
-				.from(managedObject)
-				.limit(1)
-				.execute()
-				.current();
-
-			if(existingObject != null) {
-				Log.d(TAG, "Mapping object (" + existingObject.getClass().getName() + ") from existing local object mapped by " + primaryColumnName + " = " + primaryKeyValue);
-
-				query.type(Query.Type.Update)
-					 .where(primaryColumnName, "=", primaryKeyValue);
-			}
-			else {
-				Log.d(TAG, "Creating new object with remote identifier: " + primaryKeyValue);
-
-				query.type(Query.Type.Insert);
-			}
-		}
-		catch (Exception e) {
-			e.printStackTrace();
-
-			Log.d(TAG, "Creating new object");
-
-			query.type(Query.Type.Insert);
-		}
-
 
 		/* Process relations */
 
-		Iterator<Relation> relationIterator = managedObject.relations().iterator();
-		int relationInc 					= 0;
+		Iterator<Field> relationFieldIterator = managedObject.relationFields().iterator();
 
-		while(relationIterator.hasNext()) {
-			Relation relation 				= relationIterator.next();
-			Field field						= managedObject.relationFields().get(relationInc);
+		while(relationFieldIterator.hasNext()) {
+			Field field						= relationFieldIterator.next();
+			Relation relation				= field.getAnnotation(Relation.class);
 			String keyPath 					= (relation.keyPath() == "" ? field.getName() : relation.keyPath());
-			MappingResult relationResult	= null;
+			MappingResult relationResult;
 
 			try {
 				try {
 					relationResult = new MappingResult((Class<? extends ManagedObject>) (field.getType().isArray() ? field.getType().getComponentType() : field.getType()), object.getJSONArray(keyPath), true);
 
 					field.set(managedObject, relationResult.array());
+
+					set++;
 				}
 				catch(JSONException e1) {
 					try {
 						relationResult = new MappingResult((Class<? extends ManagedObject>) field.getType(), object.getJSONObject(keyPath), true);
 
 						field.set(managedObject, relationResult.firstObject());
+
+						set++;
 					}
 					catch(JSONException e2) {
 						Log.d(TAG, "Setting relation value from response: " + e2.getMessage());
@@ -299,18 +325,17 @@ public class MappingResult {
 			}
 		}
 
+		// If we've set no values, don't bother saving
+		if(set == 0)
+			return;
+
 
 		/* Create record */
 
 		try {
 			QueryResult result = query.execute();
 
-			Log.d(TAG, "Objects: " + objects + " - " + result);
-
 			objects.add(result.current());
-
-			Log.d(TAG, "Current: " + result.current());
-			Log.d(TAG, "Object: " + objects.get(0));
 		}
 		catch (Exception e) {
 			e.printStackTrace();

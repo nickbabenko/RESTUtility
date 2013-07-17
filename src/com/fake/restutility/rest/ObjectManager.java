@@ -3,16 +3,16 @@ package com.fake.restutility.rest;
 import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
-import android.util.Log;
 import com.fake.restutility.db.Query;
 import com.fake.restutility.mapping.MappingResult;
 import com.fake.restutility.object.ManagedObject;
 import com.fake.restutility.object.ManagedObjectUtils;
+import com.fake.restutility.util.Log;
 import org.apache.http.message.BasicNameValuePair;
 
+import java.io.*;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 
 /**
  * Created by nickbabenko on 15/06/13.
@@ -29,16 +29,6 @@ public class ObjectManager {
 	public enum OAuthType {
 		OAuthType_OAuth2
 	};
-	
-	// Global References
-	private static HashMap<String, String> globalParameters;
-	
-	public static void globalParameter(String key, String value) {
-		if(globalParameters == null)
-			return;
-		
-		globalParameters.put(key, value);
-	}
 
 	// OAuth Configuration
 	private static OAuthType OAuthType 		= ObjectManager.OAuthType.OAuthType_OAuth2;
@@ -56,8 +46,7 @@ public class ObjectManager {
 	 * @param application
 	 */
 	public static void init(Application application, String baseURL, String DBName, int DBVersion) {
-		globalParameters 	= new HashMap<String, String>();
-		instance 			= new ObjectManager(application, baseURL, DBName, DBVersion);
+		instance = new ObjectManager(application, baseURL, DBName, DBVersion);
 	}
 
 	public static ObjectManager instance() {
@@ -145,7 +134,7 @@ public class ObjectManager {
 	public void getObjects(Class<? extends ManagedObject> entityClass, ObjectRequestListener objectRequestListener) {
 		ManagedObject object = Query.instantiate(entityClass);
 
-		getObjects(entityClass, object.resourcePath(), objectRequestListener, null);
+		getObjects(entityClass, object.resourcePath(), objectRequestListener, null, null);
 	}
 
 	/**
@@ -154,7 +143,16 @@ public class ObjectManager {
 	 * @param objectRequestListener
 	 */
 	public void getObjects(Class<? extends ManagedObject> entityClass, String path, ObjectRequestListener objectRequestListener) {
-		getObjects(entityClass, path, objectRequestListener, null);
+		getObjects(entityClass, path, objectRequestListener, null, null);
+	}
+
+	/**
+	 *
+	 * @param path
+	 * @param objectRequestListener
+	 */
+	public void getObjects(Class<? extends ManagedObject> entityClass, String path, ObjectRequestListener objectRequestListener, String keyPath) {
+		getObjects(entityClass, path, objectRequestListener, null, keyPath);
 	}
 
 	/**
@@ -165,7 +163,30 @@ public class ObjectManager {
 	 * @param parameters
 	 */
 	public void getObjects(Class<? extends ManagedObject> entityClass, String resourcePath, ObjectRequestListener listener, ArrayList<BasicNameValuePair> parameters) {
-		request(Request.Method.GET, entityClass, null, resourcePath, listener, parameters);
+		request(Request.Method.GET, entityClass, null, resourcePath, null, listener, parameters, null);
+	}
+
+	/**
+	 * Creates a request and sets the method type to GET
+	 *
+	 * @param resourcePath 	- The resource path of the request
+	 * @param listener		-
+	 * @param parameters
+	 */
+	public void getObjects(Class<? extends ManagedObject> entityClass, String resourcePath, ObjectRequestListener listener, ArrayList<BasicNameValuePair> parameters, String keyPath) {
+		request(Request.Method.GET, entityClass, null, resourcePath, keyPath, listener, parameters, null);
+	}
+
+	public void postObject(ManagedObject object, String resourcePath, ObjectRequestListener listener) {
+		postObject(object, resourcePath, listener, "");
+	}
+
+	public void postObject(ManagedObject object, String resourcePath, ObjectRequestListener listener, String keyPath) {
+		request(Request.Method.POST, object.getClass(), object, resourcePath, keyPath, listener, null, null);
+	}
+
+	public void postObject(ManagedObject object, String resourcePath, ObjectRequestListener listener, ArrayList<BasicNameValuePair> parameters) {
+		request(Request.Method.POST, object.getClass(), object, resourcePath, null, listener, new ArrayList<BasicNameValuePair>(), null);
 	}
 
 	/**
@@ -176,8 +197,20 @@ public class ObjectManager {
 	 * @param listener
 	 * @param parameters
 	 */
-	public void postObject(ManagedObject object, String resourcePath, ObjectRequestListener listener, ArrayList<BasicNameValuePair> parameters) {
-		request(Request.Method.POST, object.getClass(), object, resourcePath, listener, parameters);
+	public void postObject(ManagedObject object, String resourcePath, ObjectRequestListener listener, ArrayList<BasicNameValuePair> parameters, String keyPath) {
+		request(Request.Method.POST, object.getClass(), object, resourcePath, keyPath, listener, parameters, null);
+	}
+
+	public void postObject(ManagedObject object, String resourcePath, ObjectRequestListener listener, HashMap<String, File> files) {
+		postObject(object, resourcePath, listener, files, null);
+	}
+
+	public void postObject(ManagedObject object, String resourcePath, ObjectRequestListener listener, HashMap<String, File> files, String keyPath) {
+		request(Request.Method.POST, object.getClass(), object, resourcePath, keyPath, listener, null, files);
+	}
+
+	public void putObject(ManagedObject object, String resourcePath, ObjectRequestListener listener, String keyPath) {
+		request(Request.Method.PUT, object.getClass(), object, resourcePath, keyPath, listener, new ArrayList<BasicNameValuePair>(), null);
 	}
 
 	/**
@@ -189,7 +222,7 @@ public class ObjectManager {
 	 * @param parameters
 	 */
 	public void putObject(ManagedObject object, String resourcePath, ObjectRequestListener listener, ArrayList<BasicNameValuePair> parameters) {
-		request(Request.Method.PUT, object.getClass(), object, resourcePath, listener, parameters);
+		request(Request.Method.PUT, object.getClass(), object, resourcePath, null, listener, parameters, null);
 	}
 
 	/**
@@ -201,7 +234,16 @@ public class ObjectManager {
 	 * @param parameters
 	 */
 	public void deleteObject(ManagedObject object, String resourcePath, ObjectRequestListener listener, ArrayList<BasicNameValuePair> parameters) {
-		request(Request.Method.DELETE, object.getClass(), object, resourcePath, listener, parameters);
+		request(Request.Method.DELETE, object.getClass(), object, resourcePath, null, listener, parameters, null);
+	}
+
+
+	public String _baseURL(String resourcePath) {
+		String _baseURL 		= (baseURL.endsWith("/") == false ? baseURL + "/" : baseURL);							// Make sure the baseURL does end with a forward slash
+		String _resourcePath	= (resourcePath.startsWith("/") == true ? resourcePath.substring(1) : resourcePath);	// Make sure the resourcePath doesn't started with a forward slash
+		String url 				= _baseURL + _resourcePath;
+
+		return url;
 	}
 
 
@@ -215,14 +257,15 @@ public class ObjectManager {
 	 * @param listener
 	 * @param parameters
 	 */
-	private void request(final Request.Method method, final Class<? extends ManagedObject> entityClass, final ManagedObject object, String resourcePath, final ObjectRequestListener listener, final ArrayList<BasicNameValuePair> parameters) {
-		String _baseURL 		= (baseURL.endsWith("/") == false ? baseURL + "/" : baseURL);							// Make sure the baseURL does end with a forward slash
-		String _resourcePath	= (resourcePath.startsWith("/") == true ? resourcePath.substring(1) : resourcePath);	// Make sure the resourcePath doesn't started with a forward slash
-		final String url 		= _baseURL +  _resourcePath;															// Concatenate the baseURL and resourcePath
-
-		addGlobalParameters(parameters);
-		
-		Log.d(TAG, "New Request: " + OAuth2AccessToken);
+	private void request(final Request.Method method,
+						 final Class<? extends ManagedObject> entityClass,
+						 final ManagedObject object,
+						 String resourcePath,
+						 final String keyPath,
+						 final ObjectRequestListener listener,
+						 final ArrayList<BasicNameValuePair> parameters,
+						 final HashMap<String, File> files) {
+		final String url = _baseURL(resourcePath);
 
 		new Thread(new Runnable() {
 			@Override
@@ -235,16 +278,18 @@ public class ObjectManager {
 					public void requestFailed(Request request) {
 						Activity activity;
 
-						if((activity = ObjectManager.instance().currentActivity()) != null) {
-							activity.runOnUiThread(new Runnable() {
-								@Override
-								public void run() {
-									listener.failure(0);
-								}
-							});
+						if(listener != null) {
+							if((activity = ObjectManager.instance().currentActivity()) != null) {
+								activity.runOnUiThread(new Runnable() {
+									@Override
+									public void run() {
+										listener.failure(0);
+									}
+								});
+							}
+							else
+								listener.failure(0);
 						}
-						else
-							listener.failure(0);
 					}
 
 					@Override
@@ -252,55 +297,73 @@ public class ObjectManager {
 						Log.d(TAG, "Request finished: " + status);
 
 						if(status >= 400) {
-							Log.d(TAG, "Object request failed with status: " + status);
+							Log.d(TAG, "Object request failed with status: " + status, true);
 
 							Activity activity;
 
-							if((activity = ObjectManager.instance().currentActivity()) != null) {
-								activity.runOnUiThread(new Runnable() {
-									@Override
-									public void run() {
-										listener.failure(status);
-									}
-								});
+							if(listener != null) {
+								if((activity = ObjectManager.instance().currentActivity()) != null) {
+									activity.runOnUiThread(new Runnable() {
+										@Override
+										public void run() {
+											listener.failure(status);
+										}
+									});
+								}
+								else
+									listener.failure(status);
 							}
-							else
-								listener.failure(status);
+
+							StringBuilder responseStrBuilder = new StringBuilder();
+
+							String inputStr;
+
+							BufferedReader streamReader;
+
+							try {
+								streamReader = new BufferedReader(new InputStreamReader(request.getResponseStream(), "UTF-8"));
+							}
+							catch (UnsupportedEncodingException e) {
+								return;
+							}
+
+							try {
+								while ((inputStr = streamReader.readLine()) != null)
+									responseStrBuilder.append(inputStr);
+							}
+							catch (IOException e) {
+								e.printStackTrace();
+							}
+
+							Log.d(TAG, "Response string: " + responseStrBuilder.toString(), true);
 						}
 						else {
 							Log.d(TAG, "Object request succeeded.");
 
-							final MappingResult result = new MappingResult(entityClass, request.getResponseStream());
+							final MappingResult result = new MappingResult(entityClass, request.getResponseStream(), keyPath);
 							Activity activity;
 
-							if((activity = ObjectManager.instance().currentActivity()) != null) {
-								activity.runOnUiThread(new Runnable() {
-									@Override
-									public void run() {
-										listener.success(result);
-									}
-								});
+							if(listener != null) {
+								if((activity = ObjectManager.instance().currentActivity()) != null) {
+									activity.runOnUiThread(new Runnable() {
+										@Override
+										public void run() {
+											listener.success(result);
+										}
+									});
+								}
+								else
+									listener.success(result);
 							}
-							else
-								listener.success(result);
 						}
 					}
 				}, parameters)
 				.OAuth2AccessToken(OAuth2AccessToken)
 				.object(object)
+				.setFiles(files)
 				.execute();
 			}
 		}).start();
-	}
-	
-	private void addGlobalParameters(ArrayList<BasicNameValuePair> parameters) {
-		Iterator<String> globalParameterIterator = globalParameters.keySet().iterator();
-		
-		while(globalParameterIterator.hasNext()) {
-			String key = globalParameterIterator.next();
-			
-			parameters.add(new BasicNameValuePair(key, globalParameters.get(key)));
-		}
 	}
 
 
