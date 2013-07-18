@@ -62,7 +62,7 @@ public class ManagedObject {
 	private Entity entity;
 	private Column primaryColumn;
 	private Field primaryKeyField;
-	private String[] columnNames;
+	private ArrayList<String> columnNames;
 	private ArrayList<Column> columns;
 	private ArrayList<Field> columnFields;
 	private HashMap<String, Field> columnFieldsMap;
@@ -216,40 +216,39 @@ public class ManagedObject {
 		}
 
 		// Instantiate column name array for query reference using the column array size
-		columnNames 					= new String[(columns.size() + relations.size())];
+		columnNames 					= new ArrayList<String>();
 		int inc 						= 0;
 
-		Iterator<Column> columnIterator = columns.iterator();
-		int columnInc					= 0;
+		Iterator<Field> columnFieldIterator = columnFields.iterator();
 
 		// Iterate all columns
-		while(columnIterator.hasNext()) {
-			Column column 		= columnIterator.next();
+		while(columnFieldIterator.hasNext()) {
+			Field columnField 		= columnFieldIterator.next();
+			Column column			= columnField.getAnnotation(Column.class);
 
-			columnNames[inc] 	= (column.name() == "" ? columnFields.get(columnInc).getName() : column.name()); // Append to column name array
+			columnNames.add((column.name() == "" ? columnField.getName() : column.name())); // Append to column name array
 
-			columnInc++;
 			inc++;
 		}
 
 		// Iterate all relations
-		Iterator<Relation> relationIterator = relations.iterator();
-		int relationInc						= 0;
+		Iterator<Field> relationFieldIterator = relationFields.iterator();
 
-		while(relationIterator.hasNext()) {
-			Relation relation = relationIterator.next();
-			Field relationField	= relationFields.get(relationInc);
+		inc = 0;
+
+		while(relationFieldIterator.hasNext()) {
+			Field relationField	= relationFieldIterator.next();
+			Relation relation = relationField.getAnnotation(Relation.class);
 
 			// If the field is an array, it's a one-to-many relation type.
 			// These aren't loaded from the current table, so we don't need to load it
 			// Or we have a separate field to reference this relation with
-			if(relationField.getType().isArray() ||
+			if(relationField.getType().equals(QueryResult.class) ||
 			   relation.connectedBy() != "")
 				continue;
 
-			columnNames[inc] = (relation.name() == "" ? relationField.getName() : relation.name());
+			columnNames.add((relation.name() == "" ? relationField.getName() : relation.name()));
 
-			relationInc++;
 			inc++;
 		}
 	}
@@ -277,7 +276,7 @@ public class ManagedObject {
 			// If the field is an array, it's a one-to-many relation type.
 			// These aren't loaded from the current table, so we don't need to create a column
 			// Or if we have a seperate field to map this relation with, don't create it
-			if(relationField.getType().isArray() ||
+			if(relationField.getType().equals(QueryResult.class) ||
 			   relation.connectedBy() != "")
 				continue;
 
@@ -327,7 +326,7 @@ public class ManagedObject {
 			String columnName	= (column.name() == "" ? field.getName() : column.name());
 			int columnIndex 	= cursor.getColumnIndex(columnName);
 
-			if(columnIndex == -1)
+			if(columnIndex == -1 || cursor.isNull(columnIndex))
 				continue;
 
 			try {
@@ -373,16 +372,24 @@ public class ManagedObject {
 			String relationName	= (relation.name() == "" ? field.getName() : relation.name());
 
 			// If the field, is an array its a one-to-many relation.
-			if(field.getType().isArray()) {
+			if(field.getType().equals(QueryResult.class)) {
+				if(field.getType().equals(QueryResult.class) &&
+						(relation.model().equals(ManagedObject.class) ||
+								ManagedObjectUtils.isSubclassOf(relation.model(), ManagedObject.class) == false)) {
+					Log.d(TAG, "One-To-Many relations must have a model defined and the class must subclass ManagedObject");
+
+					continue;
+				}
+
 				try {
 					String connectedBy = (relation.connectedBy() == "" ? field.getName() : relation.connectedBy());
 
 					// Execute a second query for the relation and assign to the field
-					QueryResult relatedObjects = Query.select((Class<? extends ManagedObject>) field.getType().getComponentType())
+					QueryResult relatedObjects = Query.select(relation.model())
 						.where(connectedBy, "=", primaryKeyValue())
 						.execute();
 
-					field.set(this, relatedObjects.results());
+					field.set(this, relatedObjects);
 				}
 				catch (Exception e) {
 					e.printStackTrace();
@@ -417,7 +424,9 @@ public class ManagedObject {
 					// Execute a single record query referencing its identifier from the current field
 					field.set(this, Query.find((Class<? extends ManagedObject>) field.getType(), connectedByValue).current());
 				}
-				catch (IllegalAccessException e) {}
+				catch (IllegalAccessException e) {
+					e.printStackTrace();
+				}
 			}
 		}
 	}
@@ -428,7 +437,7 @@ public class ManagedObject {
 	 * @throws PrimaryKeyNotDefinedException
 	 */
 	public String[] columnNameArray() {
-		return columnNames;
+		return columnNames.toArray(new String[columnNames.size()]);
 	}
 
 	public String tableName() {
@@ -474,6 +483,9 @@ public class ManagedObject {
 				else if(columnField.getType().equals(Float.class))
 					contentValues.put(columnName, (Float) columnValue);
 
+				else if(columnField.getType().equals(Double.class))
+					contentValues.put(columnName, (Double) columnValue);
+
 				else if(columnField.getType().equals(int.class))
 					contentValues.put(columnName, columnField.getInt(this));
 
@@ -510,7 +522,7 @@ public class ManagedObject {
 				// If the field is an array, it's a one-to-many relation type.
 				// These aren't loaded from the current table, so we save its value
 				// Or if we have a separate field to map this relation with, don't use it
-				if(relationField.getType().isArray() ||
+				if(relationField.getType().equals(QueryResult.class) ||
 				   relation.connectedBy() != "")
 					continue;
 

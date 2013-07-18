@@ -249,12 +249,12 @@ public class Query {
 					Log.d(TAG, "Updated rows: " + updatedRows + " - " +  updateWhereString() + " - " + TextUtils.join(", ", updateWhereArgs()));
 
 					if(updatedRows > 0)
-						result = new QueryResult(new Query(Type.Select).from(from).where(from.primaryKeyName(), "=", from.primaryKeyValue()).execute().current());
+						result = new QueryResult(from, new Query(Type.Select).from(from).where(from.primaryKeyName(), "=", from.primaryKeyValue()).execute().getCursor());
 					else
 						Log.d(TAG, "Update failed: " + tableName());
 					break;
 				case Select:
-					Log.d(TAG, "Select where: " + selectWhereString() + " - " + TextUtils.join(", ", selectWhereArgs()) + " - " + orderBy());
+					Log.d(TAG, "Select where: " + TextUtils.join(", ", columnNameArray()) + " - " + selectWhereString() + " - " + TextUtils.join(", ", selectWhereArgs()) + " - " + orderBy());
 
 					if(rawQuery != null)
 						result = new QueryResult(from, database().rawQuery(rawQuery, rawArgs));

@@ -1,9 +1,11 @@
 package com.fake.restutility.rest;
 
 import android.webkit.MimeTypeMap;
+import com.fake.restutility.db.QueryResult;
 import com.fake.restutility.object.Column;
 import com.fake.restutility.object.ManagedObject;
 import com.fake.restutility.object.ManagedObjectUtils;
+import com.fake.restutility.object.Relation;
 import com.fake.restutility.util.Log;
 import org.apache.http.HttpResponse;
 import org.apache.http.StatusLine;
@@ -16,14 +18,13 @@ import org.apache.http.entity.mime.content.FileBody;
 import org.apache.http.entity.mime.content.StringBody;
 import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.message.BasicNameValuePair;
-import org.apache.http.params.BasicHttpParams;
-import org.apache.http.params.HttpParams;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UnsupportedEncodingException;
 import java.lang.reflect.Field;
+import java.nio.charset.Charset;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -44,15 +45,21 @@ public class Request {
 		DELETE
 	};
 
+	public enum ContentType {
+		MultipartFormData,
+		JSONEncodedString
+	};
+
 	private final Request self = this;
 
 	private Method method;
+	private ContentType contentType						= ContentType.MultipartFormData;
 	private String url;
 	private RequestListener listener;
-	private ArrayList<BasicNameValuePair> parameters = new ArrayList<BasicNameValuePair>();
+	private ArrayList<BasicNameValuePair> parameters 	= new ArrayList<BasicNameValuePair>();
 	private ManagedObject object;
 	private String OAuth2AccessToken;
-	private HashMap<String, File> files = new HashMap<String, File>();
+	private HashMap<String, File> files 				= new HashMap<String, File>();
 
 	private HttpResponse response;
 
@@ -62,7 +69,7 @@ public class Request {
 		this.listener		= listener;
 		this.parameters		= parameters;
 
-		Log.d(TAG, "New request to URL: " + url);
+		Log.d(TAG, "New request to URL: " + url, true);
 	}
 
 	/**
@@ -94,6 +101,12 @@ public class Request {
 		return this;
 	}
 
+	public Request setContentType(ContentType contentType) {
+		this.contentType = contentType;
+
+		return this;
+	}
+
 	/**
 	 *
 	 */
@@ -106,7 +119,7 @@ public class Request {
 				if(parameters != null && parameters.size() > 0)
 					url += "?" + URLEncodedUtils.format(parameters, "utf-8");
 
-				Log.d(TAG, "URL: " + url);
+				Log.d(TAG, "URL: " + url, true);
 
 				requestBase = new HttpGet(url);
 				break;
@@ -126,50 +139,53 @@ public class Request {
 			addObjectToParameters(object);
 
 		if(OAuth2AccessToken != null) {
-			Log.d(TAG, "TOKEN: " + OAuth2AccessToken);
+			Log.d(TAG, "TOKEN: " + OAuth2AccessToken, true);
 
 			requestBase.addHeader("Authorization", "Bearer " + OAuth2AccessToken);
 		}
 
 		if(parameters != null && method != Method.GET) {
-			HttpParams params = new BasicHttpParams();
+			if(contentType == ContentType.MultipartFormData) {
+				MultipartEntity requestEntity = new MultipartEntity(HttpMultipartMode.BROWSER_COMPATIBLE, null, Charset.forName("UTF-8"));
 
-			MultipartEntity requestEntity = new MultipartEntity(HttpMultipartMode.BROWSER_COMPATIBLE);
+				try {
+					for(BasicNameValuePair nameValuePair : parameters)
+						requestEntity.addPart(nameValuePair.getName(), new StringBody(nameValuePair.getValue()));
 
-			try {
-				for(BasicNameValuePair nameValuePair : parameters) {
-					params.setParameter(nameValuePair.getName(), nameValuePair.getValue());
+					if(files != null) {
+						Iterator<String> fileIterator = files.keySet().iterator();
 
-					requestEntity.addPart(nameValuePair.getName(), new StringBody(nameValuePair.getValue()));
-				}
+						while(fileIterator.hasNext()) {
+							String name 		= fileIterator.next();
+							File file			= files.get(name);
+							String extension 	= MimeTypeMap.getFileExtensionFromUrl(file.getAbsolutePath());
+							String mimeType		= MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
 
-				if(files != null) {
-					Iterator<String> fileIterator = files.keySet().iterator();
+							if(mimeType == null)
+								mimeType = "application/octet-stream";
 
-					while(fileIterator.hasNext()) {
-						String name 		= fileIterator.next();
-						File file			= files.get(name);
-						String extension 	= MimeTypeMap.getFileExtensionFromUrl(file.getAbsolutePath());
-						String mimeType		= MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
+							requestEntity.addPart(name, new FileBody(file, file.getName(), mimeType, "utf-8"));
+						}
+					}
 
-						if(mimeType == null)
-							mimeType = "application/octet-stream";
+					Log.d(TAG, "request: " + requestBase.getClass(), true);
 
-						Log.d(TAG, "File: " + name + ", " + file.getName() + ", " + mimeType);
+					if(requestBase.getClass().equals(HttpPost.class)) {
+						((HttpPost) requestBase).setEntity(requestEntity);
+					}
+					else if(requestBase.getClass().equals(HttpPut.class)) {
+						Log.d(TAG, "Set entity: " + requestEntity, true);
 
-						requestEntity.addPart(name, new FileBody(file, file.getName(), mimeType, "utf-8"));
+						((HttpPut) requestBase).setEntity(requestEntity);
 					}
 				}
-
-				if(requestBase.getClass().equals(HttpPost.class)) {
-					((HttpPost)requestBase).setEntity(requestEntity);
-				}
-				else if(requestBase.getClass().equals(HttpPut.class)) {
-					((HttpPut)requestBase).setEntity(requestEntity);
+				catch (UnsupportedEncodingException e) {
+					e.printStackTrace();
 				}
 			}
-			catch (UnsupportedEncodingException e) {}
 		}
+
+		//Log.d(TAG, "Content Type: " + requestBase.getFirstHeader("Content-Type").getValue(), true);
 
 		if(listener != null)
 			listener.requestStarted(self);
@@ -234,10 +250,10 @@ public class Request {
 					(keyPath != "" ? "]" : "");
 
 			try {
-				if(field.getType().equals(Date.class)) {
-					if(field.get(_object) == null)
-						continue;
+				if(field.get(_object) == null)
+					continue;
 
+				if(field.getType().equals(Date.class)) {
 					Date date 				= (Date) field.get(_object);
 					SimpleDateFormat format = null;
 
@@ -270,7 +286,6 @@ public class Request {
 			}
 			catch (Exception e) {}
 
-			Log.d(TAG, "parameters: " + parameters);
 		}
 
 		ArrayList<Field> relationFields		= _object.relationFields();
@@ -280,17 +295,21 @@ public class Request {
 
 		while(relationIterator.hasNext()) {
 			Field relationField				= relationIterator.next();
+			Relation relation				= relationField.getAnnotation(Relation.class);
 
 			Log.d(TAG, "Relations: " + relationField);
 
 			try {
-				if(relationField.getType().isArray() &&
-					ManagedObjectUtils.isSubclassOf(relationField.getType().getComponentType(), ManagedObject.class)) {
-					ManagedObject[] values = (ManagedObject[]) relationField.get(_object);
+				if(relationField.getType().equals(QueryResult.class)) {
+					if(relation.model() != ManagedObject.class &&
+					   ManagedObjectUtils.isSubclassOf(relation.model(), ManagedObject.class)) {
+						QueryResult results = (QueryResult) relationField.get(_object);
 
-					for(ManagedObject value : values) {
-						addObjectToParameters(value, keyPath);
+						while(results.hasNext())
+							addObjectToParameters(results.next());
 					}
+					else
+						Log.d(TAG, "One-To-Many relations must have a model defined and must be a subclass of ManagedObject");
 				}
 				else if(ManagedObjectUtils.isSubclassOf(relationField.getType(), ManagedObject.class)) {
 					ManagedObject value = (ManagedObject) relationField.get(_object);
@@ -299,6 +318,8 @@ public class Request {
 				}
 			} catch (Exception e) {}
 		}
+
+		Log.d(TAG, "parameters: " + parameters, true);
 	}
 
 	public interface RequestListener {

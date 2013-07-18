@@ -2,10 +2,7 @@ package com.fake.restutility.mapping;
 
 import com.fake.restutility.db.Query;
 import com.fake.restutility.db.QueryResult;
-import com.fake.restutility.object.Column;
-import com.fake.restutility.object.Entity;
-import com.fake.restutility.object.ManagedObject;
-import com.fake.restutility.object.Relation;
+import com.fake.restutility.object.*;
 import com.fake.restutility.util.Log;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -271,10 +268,19 @@ public class MappingResult {
 						columnField.getType().equals(Float.class)) {
 					if(columnValue.getClass().equals(String.class))
 						columnField.setFloat(managedObject, Float.valueOf((String)columnValue));
-					else if(columnValue.getClass().equals(Double.class))
-						columnField.setFloat(managedObject, ((Double)columnValue).floatValue());
+					else if(columnValue.getClass().equals(Float.class))
+						columnField.set(managedObject, columnValue);
 					else
 						columnField.setFloat(managedObject, (Float)columnValue);
+				}
+				else if(columnField.getType().equals(double.class) ||
+						columnField.getType().equals(Double.class)) {
+					if(columnValue.getClass().equals(String.class))
+						columnField.setDouble(managedObject, Double.valueOf((String) columnValue));
+					else if(columnValue.getClass().equals(Double.class))
+						columnField.set(managedObject, columnValue);
+					else
+						columnField.setDouble(managedObject, (Double) columnValue);
 				}
 				else
 					columnField.set(managedObject, columnValue);
@@ -301,7 +307,15 @@ public class MappingResult {
 
 			try {
 				try {
-					relationResult = new MappingResult((Class<? extends ManagedObject>) (field.getType().isArray() ? field.getType().getComponentType() : field.getType()), object.getJSONArray(keyPath), true);
+					if(field.getType().equals(QueryResult.class) &&
+					   (relation.model().equals(ManagedObject.class) ||
+						ManagedObjectUtils.isSubclassOf(relation.model(), ManagedObject.class) == false)) {
+						Log.d(TAG, "One-To-Many relations must have a model defined and the class must subclass ManagedObject");
+
+						continue;
+					}
+
+					relationResult = new MappingResult((Class<? extends ManagedObject>) (field.getType().equals(QueryResult.class) ? relation.model() : field.getType()), object.getJSONArray(keyPath), true);
 
 					field.set(managedObject, relationResult.array());
 

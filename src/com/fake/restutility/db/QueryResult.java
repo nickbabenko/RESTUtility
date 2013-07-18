@@ -2,11 +2,8 @@ package com.fake.restutility.db;
 
 import android.database.Cursor;
 import com.fake.restutility.object.ManagedObject;
-import com.fake.restutility.util.Log;
 
-import java.lang.reflect.Array;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.HashMap;
 
 /**
  * Created by nickbabenko on 15/06/13.
@@ -15,13 +12,10 @@ public class QueryResult {
 
 	private static final String TAG = "QueryResult";
 
-	private List<ManagedObject> results = new ArrayList<ManagedObject>();
+	private HashMap<Integer, ManagedObject> resultCache = new HashMap<Integer, ManagedObject>();
 	private int currentIndex			= 0;
 	private ManagedObject from;
-
-	public QueryResult(ManagedObject from) {
-		results.add(from);
-	}
+	private Cursor cursor;
 
 	public QueryResult(ManagedObject from, Object objectId) {
 		this.from = from;
@@ -30,77 +24,75 @@ public class QueryResult {
 	}
 
 	public QueryResult(ManagedObject from, Cursor cursor) {
-		this.from = from;
+		this.from 	= from;
+		this.cursor	= cursor;
 
-		Log.d("TAG", "Results: " + from.getClass() + " - " + cursor.getCount());
-
-		if(cursor.moveToFirst()) {
-			for(int i=0; i<cursor.getCount(); i++) {
-				loadSingleObjectFromCursor(from, cursor, i);
-
-				cursor.moveToNext();
-			}
-		}
+		cursor.moveToFirst();
 	}
 
-	public Object object(int index) {
-		return results.get(index);
+	public Cursor getCursor() {
+		return cursor;
+	}
+
+	public ManagedObject object(int index) {
+		return loadSingleObjectFromCursor(from, cursor, index);
 	}
 
 	public int count() {
-		return results.size();
+		return cursor.getCount();
+	}
+
+	public boolean isLast() {
+		return cursor.isLast();
 	}
 
 	public ManagedObject current() {
-		try {
-			return results.get(currentIndex);
-		}
-		catch(IndexOutOfBoundsException e) {
-			return null;
-		}
+		return object(currentIndex);
 	}
 
 	public boolean hasNext() {
-		return (currentIndex < results.size());
+		return (currentIndex < count());
 	}
 
-	public Object next() {
-		Object current = current();
+	public ManagedObject next() {
+		ManagedObject current = current();
 
 		currentIndex++;
 
 		return current;
 	}
 
-	public <T extends ManagedObject> T[] results() {
-		return results.toArray((T[]) Array.newInstance(from.getClass(), results.size()));
-	}
-
 	private void loadSingleObjectWithId(ManagedObject from, Object objectId) {
 		try {
-			Log.d(TAG, "Primary key: " + from.primaryKeyName() + " = " + objectId);
-
-			results.add(new Query(Query.Type.Select)
+			cursor = new Query(Query.Type.Select)
 					.from(from)
 					.where(from.primaryKeyName(), "=", objectId)
 					.limit(1)
 					.execute()
-					.current());
+					.getCursor();
 		}
 		catch (Exception e) {
 			e.printStackTrace();
 		}
 	}
 
-	private void loadSingleObjectFromCursor(ManagedObject from, Cursor cursor, int inc) {
+	private ManagedObject loadSingleObjectFromCursor(ManagedObject from, Cursor cursor, int inc) {
 		try {
+			if(resultCache.containsKey(new Integer(inc)))
+				return resultCache.get(new Integer(inc));
+
 			ManagedObject result = from.getClass().newInstance();
+
+			cursor.moveToPosition(inc);
 
 			result.setFromCursor(cursor);
 
-			results.add(result);
-		} catch (Exception e) {
-			e.printStackTrace();
+			resultCache.put(new Integer(inc), result);
+
+			return result;
+		}
+		catch (Exception e) {
+			return null;
 		}
 	}
 

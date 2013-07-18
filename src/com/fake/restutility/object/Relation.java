@@ -15,5 +15,6 @@ public @interface Relation {
 	String keyPath() 		default "";
 	String name()			default "";
 	String connectedBy()	default "";
+	Class model()			default ManagedObject.class;
 
 }
