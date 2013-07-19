@@ -3,6 +3,7 @@ package com.fake.restutility.db;
 import android.database.Cursor;
 import com.fake.restutility.object.ManagedObject;
 
+import java.lang.reflect.Field;
 import java.util.HashMap;
 
 /**
@@ -48,6 +49,38 @@ public class QueryResult {
 
 	public ManagedObject current() {
 		return object(currentIndex);
+	}
+
+	public String currentPrimaryKey() {
+		return from.primaryKeyName();
+	}
+
+	public Object currentPrimaryValue() {
+		cursor.moveToPosition(currentIndex);
+
+		int index = cursor.getColumnIndex(currentPrimaryKey());
+
+		if(index == -1)
+			return null;
+
+		Field primaryField = from.primaryKeyField();
+
+		if(primaryField.getType().equals(Integer.class) ||
+		   primaryField.getType().equals(int.class))
+			return cursor.getInt(index);
+		else if(primaryField.getType().equals(String.class))
+			return cursor.getString(index);
+		else if(primaryField.getType().equals(Double.class) ||
+				primaryField.getType().equals(double.class))
+			return cursor.getDouble(index);
+		else if(primaryField.getType().equals(Float.class) ||
+			    primaryField.getType().equals(float.class))
+			return cursor.getFloat(index);
+		else if(primaryField.getType().equals(boolean.class) ||
+				primaryField.getType().equals(Boolean.class))
+			return (cursor.getInt(index) == 1);
+		else
+			return null;
 	}
 
 	public boolean hasNext() {

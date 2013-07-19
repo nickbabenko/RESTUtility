@@ -1,5 +1,7 @@
 package com.fake.restutility.mapping;
 
+import android.database.Cursor;
+import android.text.TextUtils;
 import com.fake.restutility.db.Query;
 import com.fake.restutility.db.QueryResult;
 import com.fake.restutility.object.*;
@@ -9,7 +11,6 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.*;
-import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.util.*;
 
@@ -28,6 +29,9 @@ public class MappingResult {
 	private JSONArray jsonArray;
 
 	private List<ManagedObject> objects = new ArrayList<ManagedObject>();
+	private Cursor cursor;
+	private ArrayList<String> objectReferences = new ArrayList<String>();
+	private HashMap<Integer, ManagedObject> resultCache = new HashMap<Integer, ManagedObject>();
 
 	private boolean isRelation = false;
 
@@ -73,6 +77,13 @@ public class MappingResult {
 		catch (Exception e) {
 			e.printStackTrace();
 		}
+	}
+
+
+	/* Getters / Setters */
+
+	public Cursor getCursor() {
+		return cursor;
 	}
 
 
@@ -163,6 +174,8 @@ public class MappingResult {
 		finally {
 			//new Query(Query.Type.EndTransaction).execute();
 		}
+
+		loadCursorForManagedObjectReferences();
 	}
 
 	private void JSONArrayToManagedObjects(JSONArray array) {
@@ -231,7 +244,7 @@ public class MappingResult {
 					Long _columnValue;
 
 					if(columnValue.getClass().equals(String.class))
-						_columnValue = Long.valueOf((String)columnValue);
+						_columnValue = Long.valueOf((String) columnValue);
 					else
 						_columnValue = (Long)columnValue;
 
@@ -243,7 +256,7 @@ public class MappingResult {
 					Long _columnValue;
 
 					if(columnValue.getClass().equals(String.class))
-						_columnValue = Long.valueOf((String)columnValue);
+						_columnValue = Long.valueOf((String) columnValue);
 					else
 						_columnValue = (Long)columnValue;
 
@@ -317,7 +330,7 @@ public class MappingResult {
 
 					relationResult = new MappingResult((Class<? extends ManagedObject>) (field.getType().equals(QueryResult.class) ? relation.model() : field.getType()), object.getJSONArray(keyPath), true);
 
-					field.set(managedObject, relationResult.array());
+					field.set(managedObject, new QueryResult(managedObject, relationResult.getCursor()));
 
 					set++;
 				}
@@ -349,7 +362,7 @@ public class MappingResult {
 		try {
 			QueryResult result = query.execute();
 
-			objects.add(result.current());
+			objectReferences.add("" + result.currentPrimaryValue());
 		}
 		catch (Exception e) {
 			e.printStackTrace();
@@ -366,19 +379,42 @@ public class MappingResult {
 		return value;
 	}
 
+	public void loadCursorForManagedObjectReferences() {
+		cursor = Query.select(entityClass)
+			.raw("SELECT * FROM " + managedObject.tableName() + " WHERE " + managedObject.primaryKeyName() + " IN (?)", new String[] { TextUtils.join(", ", objectReferences.toArray(new String[objectReferences.size()])) })
+			.execute()
+			.getCursor();
+	}
+
 
 	/* Data Utility Methods */
 
-	public <T extends ManagedObject> T[] array() {
-		return objects.toArray((T[]) Array.newInstance(managedObject.getClass(), objects.size()));
-	}
-
 	public ManagedObject firstObject() {
-		return (count() >= 1 ? objects.get(0) : null);
+		return (count() >= 1 ? object(0) : null);
 	}
 
 	public int count() {
-		return objects.size();
+		return cursor.getCount();
+	}
+
+	private ManagedObject object(int inc) {
+		try {
+			if(resultCache.containsKey(new Integer(inc)))
+				return resultCache.get(new Integer(inc));
+
+			ManagedObject result = managedObject.getClass().newInstance();
+
+			cursor.moveToPosition(inc);
+
+			result.setFromCursor(cursor);
+
+			resultCache.put(new Integer(inc), result);
+
+			return result;
+		}
+		catch (Exception e) {
+			return null;
+		}
 	}
 
 }
