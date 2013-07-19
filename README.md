@@ -1,7 +1,7 @@
 # RESTUtility
 
 ## Installation
-Download the latest JAR file from here.
+Download the latest JAR file from here. _will add this link soon_
 
 ## Setup
 To initialize RESTUtility in your application - on launch, via the ```App.onCreate``` method call ```ObjectManager.init(Context context, String baseUrl, String dbName, String dbVersion)```.
@@ -51,3 +51,12 @@ public class User extends ManagedObject {
 * **ignoreIfZero**: This is for int and float types. If they value is 0, they won't be sent via requests.
 
 ### Relations
+_todo_
+
+
+## Requesting Objects
+_todo__
+
+
+## Querying Objects
+_todo_
