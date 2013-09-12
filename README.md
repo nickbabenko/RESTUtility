@@ -122,6 +122,20 @@ ObjectManager.instance().postObject(user, "user", new ObjectRequestListener() {
 }, "user");
 ```
 
+The mapping result contains a cursor referenced to the response objects. By default, it's not loaded - but count still returns a valid property. This is to improve mapping speed for large requests.
+To initialize the cursor, call the ```loadCursorForManagedObjectReference``` method. The MappingResult class interfaces cursor fully.
+
 
 ## Querying Objects
-_todo_
+Queries are done using the Query class. It support chaining, query helpers and raw query support.
+
+```Java
+QueryResult queryResult = new Query(Type.Select)
+	.from(User.class)
+	.where("name", "=", "Nick Babenko")
+	.execute();
+	
+if(queryResult.count() > 0) {
+	User user = (User) queryResult.current();
+}
+```
