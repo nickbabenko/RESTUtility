@@ -84,6 +84,7 @@ public class Query {
 		Insert,
 		Update,
 		Delete,
+		Replace,
 		BeginTransaction,
 		TransactionSuccessful,
 		EndTransaction
@@ -91,6 +92,9 @@ public class Query {
 
 	// Static
 	private static DBHelper dbHelper;
+
+	private SQLiteDatabase readableDatabase;
+	private SQLiteDatabase writableDatabase;
 
 	// Update / Insert query configuration
 	public HashMap<String, Object> data 		= new HashMap<String, Object>();
@@ -106,6 +110,7 @@ public class Query {
 	private ManagedObject from;
 	private ArrayList<QueryWhere> andWhere 		= new ArrayList<QueryWhere>();
 	private ArrayList<QueryOrder> order			= new ArrayList<QueryOrder>();
+	private ContentValues contentValues;
 
 	/**
 	 *
@@ -165,6 +170,10 @@ public class Query {
 		return this;
 	}
 
+	public Type type() {
+		return type;
+	}
+
 	/**
 	 *
 	 * @param type
@@ -182,6 +191,12 @@ public class Query {
 		return this;
 	}
 
+	public Query contentValues(ContentValues contentValues) {
+		this.contentValues = contentValues;
+
+		return this;
+	}
+
 	/**
 	 *
 	 * @param key
@@ -190,9 +205,6 @@ public class Query {
 	 * @return
 	 */
 	public Query where(String key, String type, Object value) {
-		if(value == null)
-			return this;
-
 		andWhere.add(new QueryWhere(key, type, value));
 
 		return this;
@@ -220,51 +232,69 @@ public class Query {
 	 * @return
 	 */
 	public QueryResult execute() {
-		QueryResult result = null;
+		QueryResult result 		= null;
+		SQLiteDatabase database	= null;
 
 		try {
-			switch(type) {
-				case BeginTransaction:
-					database().beginTransaction();
-					break;
-				case TransactionSuccessful:
-					database().setTransactionSuccessful();
-					break;
-				case EndTransaction:
-					database().endTransaction();
-					break;
-				case Insert:
-					long insertId = database().insert(tableName(), null, contentValues());
-
-					Log.d(TAG, "Insert Id: " + insertId);
-
-					if(insertId > 0)
-						result = new QueryResult(from, from.primaryKeyValue());
-					else
-						Log.d(TAG, "Insert failed: " + tableName());
-					break;
-				case Update:
-					int updatedRows = database().update(tableName(), contentValues(), updateWhereString(), updateWhereArgs());
-
-					Log.d(TAG, "Updated rows: " + updatedRows + " - " +  updateWhereString() + " - " + TextUtils.join(", ", updateWhereArgs()));
-
-					if(updatedRows > 0)
-						result = new QueryResult(from, new Query(Type.Select).from(from).where(from.primaryKeyName(), "=", from.primaryKeyValue()).execute().getCursor());
-					else
-						Log.d(TAG, "Update failed: " + tableName());
-					break;
-				case Select:
-					Log.d(TAG, "Select where: " + TextUtils.join(", ", columnNameArray()) + " - " + selectWhereString() + " - " + TextUtils.join(", ", selectWhereArgs()) + " - " + orderBy());
-
-					if(rawQuery != null)
-						result = new QueryResult(from, database().rawQuery(rawQuery, rawArgs));
-					else
-						result = new QueryResult(from, database().query(tableName(), columnNameArray(), selectWhereString(), selectWhereArgs(), null, null, orderBy(), " " + offset + ", " + limit));
-					break;
-			}
+			database = database();
 		}
-		catch(Exception e) {
+		catch (Exception e) {
 			e.printStackTrace();
+
+			return new QueryResult();
+		}
+
+		if(!database.isOpen())
+			return new QueryResult();
+
+		switch(type) {
+			case BeginTransaction:
+				database.beginTransaction();
+				break;
+			case TransactionSuccessful:
+				if(database.inTransaction())
+					database.setTransactionSuccessful();
+				break;
+			case EndTransaction:
+				if(database.inTransaction())
+					database.endTransaction();
+
+				writableDatabase = null;
+				readableDatabase = null;
+				break;
+			case Insert:
+				long insertId = database.insert(tableName(), null, contentValues());
+
+				Log.d(TAG, "Insert row: " + tableName() + " - " + insertId);
+
+				if(insertId > 0)
+					result = new QueryResult(from, insertId);
+				else
+					Log.d(TAG, "Insert failed: " + tableName());
+				break;
+			case Update:
+				int updatedRows = database.update(tableName(), contentValues(false), updateWhereString(), updateWhereArgs());
+
+				Log.d(TAG, "Updated rows: " + tableName() + " - " + updatedRows + " - " + updateWhereString() + " - " + TextUtils.join(", ", updateWhereArgs()));
+				break;
+			case Replace:
+				long replaceId = database.replace(tableName(), null, contentValues());
+
+				Log.d(TAG, "Replace row: " + tableName() + " - " + replaceId);
+				break;
+			case Select:
+				if(rawQuery != null)
+					result = new QueryResult(from, database.rawQuery(rawQuery, rawArgs));
+				else
+					result = new QueryResult(from, database.query(tableName(), columnNameArray(), selectWhereString(), selectWhereArgs(), null, null, orderBy(), " " + offset + ", " + limit));
+
+				Log.d(TAG, "Select where: " + tableName() + " - " + TextUtils.join(", ", columnNameArray()) + " - " + selectWhereString() + " - " + TextUtils.join(", ", selectWhereArgs()) + " - " + orderBy() + " - " + result.count());
+				break;
+			case Delete:
+				int deleted = database.delete(tableName(), selectWhereString(), selectWhereArgs());
+
+				Log.d(TAG, "Delete rows: " + tableName() + " - " + deleted + " - " + selectWhereString() + " - " + TextUtils.join(", ", selectWhereArgs()));
+				break;
 		}
 
 		return result;
@@ -278,15 +308,22 @@ public class Query {
 	 * @return
 	 */
 	private String tableName() {
+		if(from == null)
+			return "";
+
 		return from.tableName();
+	}
+
+	private ContentValues contentValues() {
+		return contentValues(true);
 	}
 
 	/**
 	 *
 	 * @return
 	 */
-	private ContentValues contentValues() {
-		return from.contentValues();
+	private ContentValues contentValues(boolean includePrimaryKey) {
+		return (contentValues == null ? from.contentValues(includePrimaryKey) : contentValues);
 	}
 
 	/**
@@ -313,6 +350,9 @@ public class Query {
 		while(whereIterator.hasNext()) {
 			QueryWhere where = whereIterator.next();
 
+			if(from.primaryKeyName().equals(where.key()) && where.value() == null)
+				continue;
+
 			selectWhereString += seperator + where.key() + " " + where.type();
 
 			if(where.value() instanceof String[] &&
@@ -335,6 +375,9 @@ public class Query {
 
 		while(whereIterator.hasNext()) {
 			QueryWhere where = whereIterator.next();
+
+			if(from.primaryKeyName().equals(where.key()) && where.value() == null)
+				continue;
 
 			if(where.value() == null ||
 			   where.value() instanceof String[])
@@ -368,22 +411,43 @@ public class Query {
 		return dbHelper;
 	}
 
-	private SQLiteDatabase database() throws Exception {
+	public Query database(SQLiteDatabase database) {
+		if(database == null)
+			return this;
+
+		if(database.isReadOnly())
+			readableDatabase = database;
+		else
+			writableDatabase = database;
+
+		return this;
+	}
+
+	public SQLiteDatabase database() throws Exception {
 		SQLiteDatabase database = null;
 
 		switch(type) {
 			case Select:
-				database = helper().getReadableDatabase();
+				if(readableDatabase != null && readableDatabase.isOpen())
+					database = readableDatabase;
+				else
+					database = helper().getReadableDatabase();
 				break;
 			case Insert:
 			case Update:
 			case Delete:
+			case Replace:
 			case BeginTransaction:
 			case TransactionSuccessful:
 			case EndTransaction:
-				database = helper().getWritableDatabase();
+				if(writableDatabase != null && writableDatabase.isOpen())
+					database = writableDatabase;
+				else
+					database = helper().getWritableDatabase();
 				break;
 		}
+
+		database.execSQL("PRAGMA foreign_keys=ON;");
 
 		return database;
 	}

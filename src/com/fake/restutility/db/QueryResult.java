@@ -14,9 +14,13 @@ public class QueryResult {
 	private static final String TAG = "QueryResult";
 
 	private HashMap<Integer, ManagedObject> resultCache = new HashMap<Integer, ManagedObject>();
-	private int currentIndex			= 0;
+	private int currentIndex							= 0;
 	private ManagedObject from;
 	private Cursor cursor;
+
+	public QueryResult() {
+
+	}
 
 	public QueryResult(ManagedObject from, Object objectId) {
 		this.from = from;
@@ -40,15 +44,19 @@ public class QueryResult {
 	}
 
 	public int count() {
-		return cursor.getCount();
+		return (cursor != null ? cursor.getCount() : 0);
 	}
 
 	public boolean isLast() {
-		return cursor.isLast();
+		return (cursor != null ? cursor.isLast() : true);
 	}
 
 	public ManagedObject current() {
 		return object(currentIndex);
+	}
+
+	public void gotoFirst() {
+		currentIndex = 0;
 	}
 
 	public String currentPrimaryKey() {
@@ -56,6 +64,9 @@ public class QueryResult {
 	}
 
 	public Object currentPrimaryValue() {
+		if(cursor == null || cursor.getCount() == 0)
+			return null;
+
 		cursor.moveToPosition(currentIndex);
 
 		int index = cursor.getColumnIndex(currentPrimaryKey());

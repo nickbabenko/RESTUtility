@@ -12,5 +12,6 @@ public @interface Entity {
 	String resourcePath() 	default "";
 	String table()			default "";
 	String requestKeyPath()	default "";
+	boolean relationsFirst() default false;
 
 }

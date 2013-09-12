@@ -2,6 +2,7 @@ package com.fake.restutility.object;
 
 import android.content.ContentValues;
 import android.database.Cursor;
+import android.os.Bundle;
 import com.fake.restutility.db.Query;
 import com.fake.restutility.db.QueryResult;
 import com.fake.restutility.exception.PrimaryKeyNotDefinedException;
@@ -10,7 +11,6 @@ import com.fake.restutility.rest.ObjectManager.ObjectRequestListener;
 import com.fake.restutility.util.Log;
 import org.apache.http.message.BasicNameValuePair;
 
-import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.util.*;
 import java.util.regex.Matcher;
@@ -120,6 +120,10 @@ public class ManagedObject {
 		return _primaryKeyName();
 	}
 
+	public Object primaryKeyValue(ContentValues contentValues) {
+		return contentValues.get(primaryKeyName());
+	}
+
 	public Object primaryKeyValue() {
 		if(primaryKeyField != null) {
 			try {
@@ -162,10 +166,7 @@ public class ManagedObject {
 	}
 
 	private void parseEntityAnnotations() {
-		if(entity != null)
-			return;
-
-		entity = getClass().getAnnotation(Entity.class);
+		entity = ManagedObjectUtils.getEntityAnnotation(getClass());
 	}
 
 
@@ -177,108 +178,45 @@ public class ManagedObject {
 	 * @throws Exception
 	 */
 	private void parseAnnotations() throws PrimaryKeyNotDefinedException {
-		if(columns != null && relations != null)
-			return;
-
-		// Get an array of this managed objects annotations
-		Field[] fields 					= getClass().getFields();
-
-		// Instantiate column and relation arrays
-		columns 						= new ArrayList<Column>();
-		relations						= new ArrayList<Relation>();
-		columnFields					= new ArrayList<Field>();
-		columnFieldsMap					= new HashMap<String, Field>();
-		relationFields					= new ArrayList<Field>();
-
-		// Iterate annotations
-		for(Field field : fields) {
-			Annotation[] annotations 	= field.getAnnotations();
-
-			for(Annotation annotation : annotations) {
-				// If the current annotation is marked as a column
-				if(annotation.annotationType().equals(Column.class)) {
-					columns.add((Column) annotation); // Add to the columns array
-					columnFields.add(field);
-					columnFieldsMap.put(field.getName(), field);
-
-					// If the current annotation is marked as the primary key
-					if(((Column) annotation).primaryKey()) {
-						primaryColumn 	= (Column) annotation; // Keep a reference to it
-						primaryKeyField = field;
-					}
-				}
-				// If the current annotation is marked as a relation
-				else if(annotation.annotationType().equals(Relation.class)) {
-					relations.add((Relation) annotation); // Add it to the relations array
-					relationFields.add(field);
-				}
-			}
-		}
-
-		// Instantiate column name array for query reference using the column array size
-		columnNames 					= new ArrayList<String>();
-		int inc 						= 0;
-
-		Iterator<Field> columnFieldIterator = columnFields.iterator();
-
-		// Iterate all columns
-		while(columnFieldIterator.hasNext()) {
-			Field columnField 		= columnFieldIterator.next();
-			Column column			= columnField.getAnnotation(Column.class);
-
-			columnNames.add((column.name() == "" ? columnField.getName() : column.name())); // Append to column name array
-
-			inc++;
-		}
-
-		// Iterate all relations
-		Iterator<Field> relationFieldIterator = relationFields.iterator();
-
-		inc = 0;
-
-		while(relationFieldIterator.hasNext()) {
-			Field relationField	= relationFieldIterator.next();
-			Relation relation = relationField.getAnnotation(Relation.class);
-
-			// If the field is an array, it's a one-to-many relation type.
-			// These aren't loaded from the current table, so we don't need to load it
-			// Or we have a separate field to reference this relation with
-			if(relationField.getType().equals(QueryResult.class) ||
-			   relation.connectedBy() != "")
-				continue;
-
-			columnNames.add((relation.name() == "" ? relationField.getName() : relation.name()));
-
-			inc++;
-		}
+		columns 			= ManagedObjectUtils.columns(getClass());
+		columnFields		= ManagedObjectUtils.columnFields(getClass());
+		relations			= ManagedObjectUtils.relations(getClass());
+		relationFields		= ManagedObjectUtils.relationFields(getClass());
+		primaryKeyField		= ManagedObjectUtils.primaryField(getClass());
+		primaryColumn		= ManagedObjectUtils.primaryColumn(getClass());
+		columnFieldsMap		= ManagedObjectUtils.columnFieldsMap(getClass());
+		columnNames			= ManagedObjectUtils.columnNames(getClass());
 	}
 
 
 	/* SQLite Helpers */
 
 	public String[] columnDefinitions() {
-		List<String> definitionList				= new ArrayList<String>();
-		Iterator<Field> columnFieldIterator 	= columnFields.iterator();
+		ArrayList<String> definitionList			= new ArrayList<String>();
+		Iterator<Field> columnFieldIterator 		= columnFields.iterator();
 
 		while(columnFieldIterator.hasNext()) {
-			Field columnField 					= columnFieldIterator.next();
-			Column column						= columnField.getAnnotation(Column.class);
+			Field columnField 						= columnFieldIterator.next();
+			Column column							= columnField.getAnnotation(Column.class);
 
 			definitionList.add(columnDefinition(column, columnField));
 		}
 
-		Iterator<Field> relationFieldIterator	= relationFields.iterator();
+		Iterator<Field> relationFieldIterator		= relationFields.iterator();
 
 		while(relationFieldIterator.hasNext()) {
-			Field relationField					= relationFieldIterator.next();
-			Relation relation					= relationField.getAnnotation(Relation.class);
+			Field relationField						= relationFieldIterator.next();
+			Relation relation						= relationField.getAnnotation(Relation.class);
 
 			// If the field is an array, it's a one-to-many relation type.
 			// These aren't loaded from the current table, so we don't need to create a column
-			// Or if we have a seperate field to map this relation with, don't create it
+			// Or if we have a separate field to map this relation with, don't create it
 			if(relationField.getType().equals(QueryResult.class) ||
-			   relation.connectedBy() != "")
+			   relation.connectedBy() != "") {
+				// Create a to-many foreign key relation from the ID field
+				//foreignKeyList.add("FOREIGN KEY (" + _primaryKeyName() + ") REFERENCES " + relationTableName(relation, relationField) + "(" + (relation.connectedBy() == "" ? "id" : relation.connectedBy()) + ")" + onDeleteAction(relation) + onUpdateAction(relation));
 				continue;
+			}
 
 			definitionList.add(relationDefinition(relation, relationField));
 		}
@@ -291,7 +229,7 @@ public class ManagedObject {
 
 	private String columnDefinition(Column column, Field field) {
 		String definition 		= null;
-		String columnName		= (column.name() == "" ? field.getName() : column.name());
+		String columnName		= columnName(column, field);
 
 		if (TYPE_MAP.containsKey(field.getType()))
 			definition = columnName + " " + TYPE_MAP.get(field.getType()).toString();
@@ -304,16 +242,120 @@ public class ManagedObject {
 
 			if (column.primaryKey())
 				definition += " PRIMARY KEY" + (column.autoIncrement() == true ? " AUTOINCREMENT" : "");
+			else if(column.unique())
+				definition += " UNIQUE";
+		}
+
+		if(column.referenceModel() != ManagedObject.class &&
+		   column.referenceColumn() != "") {
+			definition += " REFERENCES " + Query.instantiate(column.referenceModel()).tableName() + "(" + column.referenceColumn() + ")";
+
+			definition += onUpdateAction(column);
+			definition += onDeleteAction(column);
 		}
 
 		return definition;
 	}
 
+	private String onDeleteAction(Column column) {
+		return " ON DELETE " + foreignActionToString(column.onDelete());
+	}
+
+	private String onUpdateAction(Column column) {
+		if(column.onUpdate() == Column.ForeignAction.Empty)
+			return "";
+
+		return " ON UPDATE " + foreignActionToString(column.onUpdate());
+	}
+
+	private String foreignActionToString(Column.ForeignAction foreignAction) {
+		switch(foreignAction) {
+			case NoAction:
+				return "NO ACTION";
+			case Restrict:
+				return "RESTRICT";
+			case SetNull:
+				return "SET NULL";
+			case SetDefault:
+				return "SET DEFAULT";
+			case Cascade:
+				return "CASCADE";
+		}
+
+		return "";
+	}
+
+	private String columnName(Column column, Field field) {
+		return (column.name() == "" ? field.getName() : column.name());
+	}
+
 	private String relationDefinition(Relation relation, Field field) {
+		String foreignTable		= relationTableName(relation, field);
+		String foreignKey		= foreignKey(relation, field);
+
 		String columnName		= (relation.name() == "" ? field.getName() : relation.name());
-		String definition 		= columnName + " " + TYPE_MAP.get(Integer.class).toString();
+		String definition 		= columnName + " " + TYPE_MAP.get(Integer.class).toString(); // + " REFERENCES " + foreignTable + "(" + foreignKey + ")" + onDeleteAction(relation) + onUpdateAction(relation);
 
 		return definition;
+	}
+
+	private String relationTableName(Relation relation, Field field) {
+		ManagedObject object = managedObjectFromRelation(relation, field);
+
+		if(object != null)
+			return object.tableName();
+
+		return "";
+	}
+
+	private String foreignKey(Relation relation, Field field) {
+		ManagedObject object = managedObjectFromRelation(relation, field);
+
+		if(object != null)
+			return object.primaryKeyName();
+
+		return "";
+	}
+
+	private String onDeleteAction(Relation relation) {
+		return " ON DELETE " + foreignActionToString(relation.onDelete());
+	}
+
+	private String onUpdateAction(Relation relation) {
+		return " ON UPDATE " + foreignActionToString(relation.onUpdate());
+	}
+
+	private String foreignActionToString(Relation.ForeignAction foreignAction) {
+		switch(foreignAction) {
+			case NoAction:
+				return "NO ACTION";
+			case Restrict:
+				return "RESTRICT";
+			case SetNull:
+				return "SET NULL";
+			case SetDefault:
+				return "SET DEFAULT";
+			case Cascade:
+				return "CASCADE";
+		}
+
+		return "";
+	}
+
+	private ManagedObject managedObjectFromRelation(Relation relation, Field field) {
+		Class<? extends ManagedObject> relationModelClass = null;
+
+		if(field.getType().equals(QueryResult.class)) {
+			if(relation.model() != ManagedObject.class)
+				relationModelClass = relation.model();
+		}
+		else
+			relationModelClass = (Class<? extends ManagedObject>)field.getType();
+
+		if(relationModelClass != null)
+			return Query.instantiate(relationModelClass);
+
+		return null;
 	}
 
 	public void setFromCursor(Cursor cursor) {
@@ -344,12 +386,12 @@ public class ManagedObject {
 					field.set(this, cursor.getFloat(columnIndex));
 				}
 				else if(field.getType().equals(Date.class)) {
-					field.set(this, new Date(cursor.getLong(columnIndex)));
+					field.set(this, new Date((cursor.getLong(columnIndex) * 1000)));
 				}
 				else if(field.getType().equals(Calendar.class)) {
 					Calendar calendar = new GregorianCalendar();
 
-					calendar.setTimeInMillis(cursor.getLong(columnIndex));
+					calendar.setTimeInMillis((cursor.getLong(columnIndex) * 1000));
 
 					field.set(this, calendar);
 				}
@@ -454,6 +496,10 @@ public class ManagedObject {
 	}
 
 	public ContentValues contentValues() {
+		return contentValues(true);
+	}
+
+	public ContentValues contentValues(boolean includePrimaryKey) {
 		ContentValues contentValues = new ContentValues();
 
 		// Store columns
@@ -468,7 +514,7 @@ public class ManagedObject {
 			try {
 				columnValue	= columnField.get(this);
 
-				if(columnValue == null)
+				if(columnValue == null || (!includePrimaryKey && column.primaryKey()))
 					continue;
 
 				if(columnField.getType().equals(String.class))
@@ -493,10 +539,10 @@ public class ManagedObject {
 					contentValues.put(columnName, (Float) columnValue);
 
 				else if(columnField.getType().equals(Calendar.class))
-					contentValues.put(columnName, ((Calendar) columnValue).getTimeInMillis());
+					contentValues.put(columnName, (((Calendar) columnValue).getTimeInMillis() / 1000));
 
 				else if(columnField.getType().equals(Date.class))
-					contentValues.put(columnName, ((Date) columnValue).getTime());
+					contentValues.put(columnName, (((Date) columnValue).getTime() / 1000));
 
 				else if(columnField.getType().equals(boolean.class))
 					contentValues.put(columnName, columnField.getBoolean(this));
@@ -528,7 +574,9 @@ public class ManagedObject {
 
 				contentValues.put(columnName, (Integer) (((ManagedObject) relationValue).primaryKeyValue()));
 			}
-			catch (IllegalAccessException e) {}
+			catch (IllegalAccessException e) {
+				e.printStackTrace();
+			}
 		}
 
 		return contentValues;
@@ -595,6 +643,22 @@ public class ManagedObject {
 		}
 	}
 
+	public boolean deleteLocal() {
+		try {
+			new Query(Query.Type.Delete)
+					.from(this)
+					.where("id", "=", primaryKeyValue())
+					.execute();
+
+			return true;
+		}
+		catch (Exception e) {
+			e.printStackTrace();
+
+			return false;
+		}
+	}
+
 	/**
 	 *
 	 * @param listener
@@ -610,6 +674,56 @@ public class ManagedObject {
 	 */
 	public void delete(ObjectRequestListener listener, ArrayList<BasicNameValuePair> parameters) throws Exception {
 		ObjectManager.instance().deleteObject(this, resourcePath(), listener, parameters);
+	}
+
+
+
+	/* Overridable methods */
+
+	public Query cacheQuery(String url, Bundle args) {
+		return null;
+	}
+
+	public ResponseDescriptor[] responseDescriptors() {
+		return null;
+	}
+
+	public RequestDescriptor[] requestDescriptors() {
+		return null;
+	}
+
+
+	/* Protected helper methods */
+
+	protected boolean matchPath(String path, String patternString) {
+		String[] pathParts 		= path.split("/");
+		String[] patternParts 	= patternString.split("/");
+
+		int match				= 0;
+		int toMatch				= 0;
+
+		for(int i=0; i<pathParts.length; i++) {
+			String pathPart 	= pathParts[i];
+
+			if(patternParts.length >= i) {
+				String patternPart 	= patternParts[i];
+
+				// Only check the parts that are not variables
+				if(patternPart.substring(0, 1).equals(":") == false) {
+					toMatch++;
+
+					if(patternPart.equals(pathPart))
+						match++;
+				}
+				else {
+					// Increase both for variables as we need to acknowledge they exist
+					toMatch++;
+					match++;
+				}
+			}
+		}
+
+		return (match == toMatch);
 	}
 
 }

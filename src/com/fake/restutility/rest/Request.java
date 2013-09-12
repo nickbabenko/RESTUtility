@@ -7,6 +7,7 @@ import com.fake.restutility.object.ManagedObject;
 import com.fake.restutility.object.ManagedObjectUtils;
 import com.fake.restutility.object.Relation;
 import com.fake.restutility.util.Log;
+import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
 import org.apache.http.StatusLine;
 import org.apache.http.client.HttpClient;
@@ -18,6 +19,9 @@ import org.apache.http.entity.mime.content.FileBody;
 import org.apache.http.entity.mime.content.StringBody;
 import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.message.BasicNameValuePair;
+import org.apache.http.params.BasicHttpParams;
+import org.apache.http.params.HttpConnectionParams;
+import org.apache.http.params.HttpParams;
 
 import java.io.File;
 import java.io.IOException;
@@ -26,10 +30,7 @@ import java.io.UnsupportedEncodingException;
 import java.lang.reflect.Field;
 import java.nio.charset.Charset;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.Iterator;
+import java.util.*;
 
 /**
  * Created by nickbabenko on 15/06/13.
@@ -51,6 +52,7 @@ public class Request {
 	};
 
 	private final Request self = this;
+	private static final int timeout 					= 60; // seconds
 
 	private Method method;
 	private ContentType contentType						= ContentType.MultipartFormData;
@@ -60,6 +62,7 @@ public class Request {
 	private ManagedObject object;
 	private String OAuth2AccessToken;
 	private HashMap<String, File> files 				= new HashMap<String, File>();
+	private Timer requestTimer;
 
 	private HttpResponse response;
 
@@ -111,7 +114,12 @@ public class Request {
 	 *
 	 */
 	public void execute() {
-		HttpClient requestClient 		= new DefaultHttpClient();
+		HttpParams httpParameters = new BasicHttpParams();
+
+		HttpConnectionParams.setConnectionTimeout(httpParameters, (timeout * 1000));
+		HttpConnectionParams.setSoTimeout(httpParameters, (timeout  * 1000));
+
+		HttpClient requestClient 		= new DefaultHttpClient(httpParameters);
 		HttpRequestBase requestBase 	= null;
 
 		switch(method) {
@@ -144,6 +152,8 @@ public class Request {
 			requestBase.addHeader("Authorization", "Bearer " + OAuth2AccessToken);
 		}
 
+		requestBase.addHeader("User-Agent", "RESTUtility 1.0");
+
 		if(parameters != null && method != Method.GET) {
 			if(contentType == ContentType.MultipartFormData) {
 				MultipartEntity requestEntity = new MultipartEntity(HttpMultipartMode.BROWSER_COMPATIBLE, null, Charset.forName("UTF-8"));
@@ -164,6 +174,8 @@ public class Request {
 							if(mimeType == null)
 								mimeType = "application/octet-stream";
 
+							Log.d(TAG, "Add file: " + name + " - " + file.getName() + " - " + mimeType, true);
+
 							requestEntity.addPart(name, new FileBody(file, file.getName(), mimeType, "utf-8"));
 						}
 					}
@@ -171,6 +183,8 @@ public class Request {
 					Log.d(TAG, "request: " + requestBase.getClass(), true);
 
 					if(requestBase.getClass().equals(HttpPost.class)) {
+						Log.d(TAG, "Set entity: " + requestEntity, true);
+
 						((HttpPost) requestBase).setEntity(requestEntity);
 					}
 					else if(requestBase.getClass().equals(HttpPut.class)) {
@@ -185,16 +199,50 @@ public class Request {
 			}
 		}
 
-		//Log.d(TAG, "Content Type: " + requestBase.getFirstHeader("Content-Type").getValue(), true);
-
 		if(listener != null)
 			listener.requestStarted(self);
 
+		requestTimer = new Timer();
+
+		final HttpRequestBase _requestBase = requestBase;
+
+		requestTimer.schedule(new TimerTask() {
+			@Override
+			public void run() {
+				if(_requestBase != null)
+					_requestBase.abort();
+
+				if(requestTimer != null) {
+					requestTimer.cancel();
+					requestTimer.purge();
+
+					requestTimer = null;
+				}
+			}
+		}, ((timeout + 30) * 1000));
+
 		try {
+			Log.d(TAG, "Begin request", true);
 			response = requestClient.execute(requestBase);
+
+			if(requestTimer != null) {
+				requestTimer.cancel();
+				requestTimer.purge();
+
+				requestTimer = null;
+			}
+
+			Log.d(TAG, "Request done", true);
 		}
 		catch (Exception e) {
-			Log.d(TAG, "Failed to make request: " + e.getMessage());
+			if(requestTimer != null) {
+				requestTimer.cancel();
+				requestTimer.purge();
+
+				requestTimer = null;
+			}
+
+			Log.d(TAG, "Failed to make request: " + e.getMessage(), true);
 
 			e.printStackTrace();
 
@@ -204,7 +252,11 @@ public class Request {
 			return;
 		}
 
+
+
 		StatusLine statusLine = response.getStatusLine();
+
+		Log.d(TAG, "Request finished: " + statusLine.getStatusCode() + " - " + url, true);
 
 		if(listener != null)
 			listener.requestFinished(self, statusLine.getStatusCode());
@@ -216,7 +268,14 @@ public class Request {
 	 */
 	public InputStream getResponseStream() {
 		try {
-			return response.getEntity().getContent();
+			HttpEntity entity = response.getEntity();
+
+			if(entity == null || entity.getContentLength() == 0)
+				return null;
+
+			InputStream content = entity.getContent();
+
+			return content;
 		}
 		catch (IOException e) {
 			return null;
@@ -259,7 +318,7 @@ public class Request {
 
 					switch(column.dateFormat()) {
 						case Unix:
-							parameters.add(new BasicNameValuePair(key, "" + date.getTime()));
+							parameters.add(new BasicNameValuePair(key, "" + (date.getTime() / 1000)));
 							break;
 						case MySql_Date:
 							format = new SimpleDateFormat("yyyy-MM-dd");
@@ -285,7 +344,6 @@ public class Request {
 				}
 			}
 			catch (Exception e) {}
-
 		}
 
 		ArrayList<Field> relationFields		= _object.relationFields();
@@ -296,6 +354,9 @@ public class Request {
 		while(relationIterator.hasNext()) {
 			Field relationField				= relationIterator.next();
 			Relation relation				= relationField.getAnnotation(Relation.class);
+
+			if(!relation.includeInRequest())
+				continue;
 
 			Log.d(TAG, "Relations: " + relationField);
 

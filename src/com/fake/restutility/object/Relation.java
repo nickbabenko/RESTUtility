@@ -12,9 +12,20 @@ import java.lang.annotation.Target;
 @Target(ElementType.FIELD)
 public @interface Relation {
 
-	String keyPath() 		default "";
-	String name()			default "";
-	String connectedBy()	default "";
-	Class model()			default ManagedObject.class;
+	public enum ForeignAction {
+		NoAction,
+		Restrict,
+		SetNull,
+		SetDefault,
+		Cascade
+	};
+
+	String keyPath() 			default "";
+	String name()				default "";
+	String connectedBy()		default "";
+	Class model()				default ManagedObject.class;
+	ForeignAction onDelete()	default ForeignAction.NoAction;
+	ForeignAction onUpdate()	default ForeignAction.NoAction;
+	boolean includeInRequest()	default true;
 
 }

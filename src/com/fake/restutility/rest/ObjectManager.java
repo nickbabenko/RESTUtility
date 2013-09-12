@@ -3,14 +3,20 @@ package com.fake.restutility.rest;
 import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
+import android.database.sqlite.SQLiteDatabase;
+import android.os.Bundle;
 import com.fake.restutility.db.Query;
+import com.fake.restutility.mapping.MappingCache;
 import com.fake.restutility.mapping.MappingResult;
 import com.fake.restutility.object.ManagedObject;
 import com.fake.restutility.object.ManagedObjectUtils;
 import com.fake.restutility.util.Log;
 import org.apache.http.message.BasicNameValuePair;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.HashMap;
 
@@ -78,9 +84,9 @@ public class ObjectManager {
 
 	public ObjectManager(Application application, String baseURL, String DBName, int DBVersion) {
 		this.application 	= application;
-		this.baseURL	= baseURL;
-		this.DBName		= DBName;
-		this.DBVersion	= DBVersion;
+		this.baseURL		= baseURL;
+		this.DBName			= DBName;
+		this.DBVersion		= DBVersion;
 
 		ManagedObjectUtils.init(application);
 	}
@@ -225,6 +231,10 @@ public class ObjectManager {
 		request(Request.Method.PUT, object.getClass(), object, resourcePath, null, listener, parameters, null);
 	}
 
+	public void deleteObject(ManagedObject object, String resourcePath, ObjectRequestListener listener) {
+		request(Request.Method.DELETE, object.getClass(), object, resourcePath, null, listener, new ArrayList<BasicNameValuePair>(), null);
+	}
+
 	/**
 	 * Created a request and sets the method type to DELETE
 	 *
@@ -236,7 +246,6 @@ public class ObjectManager {
 	public void deleteObject(ManagedObject object, String resourcePath, ObjectRequestListener listener, ArrayList<BasicNameValuePair> parameters) {
 		request(Request.Method.DELETE, object.getClass(), object, resourcePath, null, listener, parameters, null);
 	}
-
 
 	public String _baseURL(String resourcePath) {
 		String _baseURL 		= (baseURL.endsWith("/") == false ? baseURL + "/" : baseURL);							// Make sure the baseURL does end with a forward slash
@@ -260,7 +269,7 @@ public class ObjectManager {
 	private void request(final Request.Method method,
 						 final Class<? extends ManagedObject> entityClass,
 						 final ManagedObject object,
-						 String resourcePath,
+						 final String resourcePath,
 						 final String keyPath,
 						 final ObjectRequestListener listener,
 						 final ArrayList<BasicNameValuePair> parameters,
@@ -294,10 +303,10 @@ public class ObjectManager {
 
 					@Override
 					public void requestFinished(Request request, final int status) {
-						Log.d(TAG, "Request finished: " + status);
+						Log.d(TAG, "Request finished: " + status, true);
 
 						if(status >= 400) {
-							Log.d(TAG, "Object request failed with status: " + status, true);
+							Log.d(TAG, "Object request failed with status: " + status + " (" + resourcePath + ")", true);
 
 							Activity activity;
 
@@ -323,7 +332,7 @@ public class ObjectManager {
 							try {
 								streamReader = new BufferedReader(new InputStreamReader(request.getResponseStream(), "UTF-8"));
 							}
-							catch (UnsupportedEncodingException e) {
+							catch (Exception e) {
 								return;
 							}
 
@@ -338,10 +347,36 @@ public class ObjectManager {
 							Log.d(TAG, "Response string: " + responseStrBuilder.toString(), true);
 						}
 						else {
-							Log.d(TAG, "Object request succeeded.");
+							Log.d(TAG, "Object request succeeded - " + entityClass.getName(), true);
 
-							final MappingResult result = new MappingResult(entityClass, request.getResponseStream(), keyPath);
+							Query beginTransactionQuery = new Query(Query.Type.BeginTransaction);
+							SQLiteDatabase database = null;
+
+							try {
+								database = beginTransactionQuery.database();
+							} catch (Exception e) {
+								e.printStackTrace();
+							}
+
+							MappingResult _result;
+
+							try {
+								database.beginTransaction();
+
+								requestCacheQuery((object == null ? Query.instantiate(entityClass) : object), resourcePath, database);
+
+								_result = new MappingResult(entityClass, request.getResponseStream(), keyPath, database);
+
+								database.setTransactionSuccessful();
+							}
+							finally {
+								database.endTransaction();
+							}
+
+							MappingCache.reset();
+
 							Activity activity;
+							final MappingResult result = _result;
 
 							if(listener != null) {
 								if((activity = ObjectManager.instance().currentActivity()) != null) {
@@ -364,6 +399,42 @@ public class ObjectManager {
 				.execute();
 			}
 		}).start();
+	}
+
+	/**
+	 * Attempts to request a query object from the class - use the conditional values to execute a delete query
+	 * This is used to free up un-wanted data after a valid request. Keeps the data store fresh.
+	 *
+	 * @param entity
+	 * @param path
+	 */
+	private void requestCacheQuery(ManagedObject entity, String path, SQLiteDatabase database) {
+		if(entity != null) {
+			Query query = entity.cacheQuery(path, argsFromPath(path));		// Get a query from the class
+
+			// Only continue if we have a valid query
+			if(query != null) {
+				query.database(database);
+				query.type(Query.Type.Delete); 			// Force delete
+				query.from(entity);						// Define the entity to execute the request on (Only the table name is accessed through this)
+
+				query.execute();
+			}
+		}
+	}
+
+	private Bundle argsFromPath(String path) {
+		Bundle bundle 		= new Bundle();
+
+		/**
+		 * TODO: Implement some way of defining a URL pattern with defined parameters
+		 * This will allow us to iterate the parts of the patter url and extract the values from the passed path
+		 * Then assign them to the bundle using the key from the pattern and value from the path
+		 * First we need to be able to have a pattern path - Maybe implement the response descriptors,
+		 * which are matched against the url and the valid descriptor is passed through out the response handling methods
+		 */
+
+		return bundle;
 	}
 
 
