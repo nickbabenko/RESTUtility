@@ -31,10 +31,10 @@ Give each property a ```Column``` annotation.
 @Entity(requestKeyPath = "user", resourcePath = "users", table = "users")
 public class User extends ManagedObject {
 
-  @Column(primaryKey = true, autoIncrement = false)
+  	@Column(primaryKey = true, autoIncrement = false)
 	public int id;
 	
-	@Column(name = "email")
+	@Column
 	public String name;
 	
 	@Column(name = "creation_date", keyPath = "creation_date")
@@ -51,11 +51,76 @@ public class User extends ManagedObject {
 * **ignoreIfZero**: This is for int and float types. If they value is 0, they won't be sent via requests.
 
 ### Relations
-_todo_
+Relations come in 2 forms, each can be configured differently. 
+The first is a one-to-one relations; the one-to-one relations is identified by the property type. 
+The second type is a one-to-many object relations; this is stored by a QueryResult object - this allows you to use it as a cursor for list views etc.
+
+```Java
+@Entity(requestKeyPath = "user", resourcePath = "users", table = "users")
+public class User extends ManagedObject {
+
+  	@Column(primaryKey = true, autoIncrement = false)
+	public int id;
+	
+	@Column
+	public String name;
+	
+	@Column(name = "creation_date", keyPath = "creation_date")
+	public Date creationDate;
+	
+	@Relation
+	public UserProfile profile;
+	
+	@Relation(model = Comment.class, connectedBy = "userid")
+	public QueryResult comments;
+
+}
+```
+* **keyPath**: The keyPath value is used to extract the object from the JSON object, if not defined the field name is used
+* **name**: The database column defines the column name in the database, if not defined the field name is used
+* **connectedBy**: The remote column name to reference the relationship with. If not defined, the default value is the local column name
+* **model**: The model to reference in the relationship. This value is only used when defining a one-to-many relation and the field type is QueryResult
+* **onDelete**: The action to perform when the remote object is deleted
+* **onUpdate**: The action to perform when the remote object is updated
+* **includeInRequest**: Indicates wether to send this relation when sending via the rest service - default is true
 
 
 ## Requesting Objects
-_todo_
+When requesting object, you can use the standard HTTP verbs using the ObjectManager interface. It has support for GET, POST, PUT and DELETE.
+
+```Java
+User user = new User();
+
+user.name = "Nick Babenko";
+user.creationData = new Date();
+
+ObjectManager.instance().postObject(user, "user", new ObjectRequestListener() {
+
+	@Override
+	public void success(MappingResult mappingResult) {
+		mappingResult.loadCursorForManagedObjectReference();
+		
+		if(mappingResult.count() > 0) {
+			User user = (User) mappingResult.firstObject();
+			
+			Intent intent = new Intent(context, UserProfileActivity.class);
+			
+			intent.putParcelableExtra(Key_User, user);
+			
+			startActivity(userIntent);
+		}
+	}
+	
+	@Override
+	public void failure(int status) {
+		new AlertDialog.Builder(context)
+			.setTitle("Registration")
+			.setMessage("Registration failed")
+			.setNeutralButton("OK", null)
+			.show();
+	}
+}, "user");
+```
 
 
 ## Querying Objects
